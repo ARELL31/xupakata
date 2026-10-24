@@ -37,6 +37,10 @@ class FakeDevice:
         self.modes = modes
         self.active_mode = 0 if color_mode == utils.ModeColors.PER_LED else 1
         self.calls = []
+        self.updates = 0
+
+    def update(self):
+        self.updates += 1
 
     def set_mode(self, selected):
         self.calls.append(("mode", selected))
@@ -124,6 +128,18 @@ def test_sin_modos_no_se_puede_cambiar(monkeypatch):
 
     with pytest.raises(backend.BackendError, match="no expone modos"):
         client.set_mode(ref, "Direct")
+
+
+def test_info_refresh_pide_actualizacion(monkeypatch):
+    device = FakeDevice()
+    client = install(monkeypatch, device)
+    ref = client.devices()[0]["id"]
+
+    client.info(ref, refresh=True)
+    assert device.updates == 1
+
+    client.info(ref)
+    assert device.updates == 1
 
 
 def test_devices_expone_identidad(monkeypatch):

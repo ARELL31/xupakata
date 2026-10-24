@@ -9,6 +9,7 @@ Contrato:
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import threading
 import warnings
@@ -19,9 +20,15 @@ from openrgb import OpenRGBClient, utils
 HOST = "127.0.0.1"
 PORT = 6742
 
+logger = logging.getLogger(__name__)
+
 
 class BackendError(Exception):
     """La operación fue rechazada por OpenRGB o por el dispositivo."""
+
+
+class ServerUnavailable(BackendError):
+    """No hay servidor OpenRGB escuchando."""
 
 
 class ConnectionLost(BackendError):
@@ -30,6 +37,14 @@ class ConnectionLost(BackendError):
 
 class DeviceGone(BackendError):
     """La referencia al dispositivo ya no es válida (reconexión o desconexión)."""
+
+
+class Incompatible(BackendError):
+    """El dispositivo o el modo actual no admite la operación."""
+
+
+class Unconfirmed(BackendError):
+    """El dispositivo no confirmó el cambio solicitado."""
 
 
 class DeviceSummary(TypedDict):
@@ -110,7 +125,8 @@ class RgbBackend:
                 name="GNOME RGB",
             )
         except OSError as exc:
-            raise BackendError(
+            logger.debug("no se pudo conectar con OpenRGB: %s", exc)
+            raise ServerUnavailable(
                 f"servidor OpenRGB no disponible en {self._host}:{self._port}"
             ) from exc
         self._client = client
@@ -138,6 +154,7 @@ class RgbBackend:
             try:
                 return fn(self._client)
             except OSError as exc:  # incluye OpenRGBDisconnected y timeouts
+                logger.debug("conexión con OpenRGB perdida: %s", exc)
                 self._close()
                 raise ConnectionLost(f"se perdió la conexión con OpenRGB: {exc}") from exc
             except (IndexError, ValueError) as exc:
@@ -168,9 +185,17 @@ class RgbBackend:
             ]
         )
 
-    def info(self, ref: str) -> DeviceInfo:
+    def info(self, ref: str, refresh: bool = False) -> DeviceInfo:
+        """Estado del dispositivo.
+
+        refresh=True pide al servidor que actualice los datos antes de leerlos.
+        Aun así es el estado que reporta OpenRGB, no una medición del hardware.
+        """
+
         def read(client) -> DeviceInfo:
             device = self._device(client, ref)
+            if refresh:
+                device.update()
             mode = (
                 device.modes[device.active_mode]
                 if device.modes and device.active_mode < len(device.modes)
@@ -207,7 +232,7 @@ class RgbBackend:
             )
             if mode is None or mode.color_mode == utils.ModeColors.NONE:
                 current = mode.name if mode else "desconocido"
-                raise BackendError(
+                raise Incompatible(
                     f"{device.name} en modo {current} no admite color manual; "
                     "elige un modo compatible"
                 )
@@ -219,12 +244,12 @@ class RgbBackend:
         def write(client) -> None:
             device = self._device(client, ref)
             if not device.modes:
-                raise BackendError(f"{device.name} no expone modos")
+                raise Incompatible(f"{device.name} no expone modos")
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 device.set_mode(name)
             if caught:
-                raise BackendError(f"{device.name} no confirmó el modo {name}")
+                raise Unconfirmed(f"{device.name} no confirmó el modo {name}")
 
         self._run(write)
 
@@ -238,7 +263,7 @@ class RgbBackend:
             )
             rng = _brightness_range(mode) if mode else None
             if rng is None:
-                raise BackendError("el modo actual no admite brillo")
+                raise Incompatible("el modo actual no admite brillo")
             lo, hi = rng
             mode.brightness = lo + round(percent * (hi - lo) / 100)
             device.set_mode(mode)
@@ -288,7 +313,7 @@ class FakeBackend:
     def devices(self) -> list[DeviceSummary]:
         return [dict(device) for device in self._devices]
 
-    def info(self, ref: str) -> DeviceInfo:
+    def info(self, ref: str, refresh: bool = False) -> DeviceInfo:
         device = next(d for d in self._devices if d["id"] == ref)
         state = self._state[ref]
         current = next(m for m in _MODES if m["name"] == state["mode"])
@@ -309,7 +334,7 @@ class FakeBackend:
     def set_color(self, ref: str, red: int, green: int, blue: int) -> None:
         current = next(m for m in _MODES if m["name"] == self._state[ref]["mode"])
         if not current["color"]:
-            raise BackendError(
+            raise Incompatible(
                 f"el modo {current['name']} no admite color manual; elige un modo compatible"
             )
         self._state[ref]["color"] = (red, green, blue)
