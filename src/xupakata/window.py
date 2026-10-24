@@ -146,6 +146,7 @@ class RgbWindow(Adw.ApplicationWindow):
 
         self.worker = Worker()
         self._add_icon_paths()
+        self._install_css()
 
         header = Adw.HeaderBar()
         self.back_button = Gtk.Button(icon_name="go-previous-symbolic")
@@ -208,9 +209,42 @@ class RgbWindow(Adw.ApplicationWindow):
             if candidate.is_dir():
                 theme.add_search_path(str(candidate))
 
+    def _install_css(self):
+        display = Gdk.Display.get_default()
+        if display is None or getattr(RgbWindow, "_css_ready", False):
+            return
+        provider = Gtk.CssProvider()
+        provider.load_from_data(
+            b"""
+            .device-list,
+            .device-list > row {
+              background-color: transparent;
+            }
+            .sidebar-pane {
+              background-color: @window_bg_color;
+            }
+            .device-list > row {
+              border-radius: 9px;
+              margin: 2px 0;
+            }
+            .device-list > row:hover,
+            .device-list > row:selected:hover {
+              background-color: rgba(120, 120, 120, 0.16);
+            }
+            .device-list > row:selected {
+              background-color: transparent;
+              color: inherit;
+            }
+            """
+        )
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        RgbWindow._css_ready = True
+
     def _build_sidebar(self):
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
-        self.listbox.add_css_class("boxed-list")
+        self.listbox.add_css_class("device-list")
         self.listbox.connect("row-selected", self._on_row_selected)
 
         self.device_count = Gtk.Label(label="", xalign=0)
@@ -550,6 +584,11 @@ class RgbWindow(Adw.ApplicationWindow):
             icon = Gtk.Image.new_from_icon_name(_device_icon(device.get("type", "")))
             icon.set_pixel_size(24)
             row.add_prefix(icon)
+            check = Gtk.Image.new_from_icon_name("object-select-symbolic")
+            check.set_visible(False)
+            check.add_css_class("dim-label")
+            row.add_suffix(check)
+            row.check = check
             row.device = device
             self.listbox.append(row)
 
@@ -596,11 +635,20 @@ class RgbWindow(Adw.ApplicationWindow):
 
     # --- selección ---
 
+    def _update_selection_marks(self):
+        row = self.listbox.get_row_at_index(0)
+        while row is not None:
+            mark = getattr(row, "check", None)
+            if mark is not None:
+                mark.set_visible(row.is_selected())
+            row = row.get_next_sibling()
+
     def _on_row_selected(self, _listbox, row):
         self.selection_revision += 1
         revision = self.selection_revision
         self._cancel_brightness()
         self._message = ""
+        self._update_selection_marks()
 
         if row is None or self.backend is None:
             self.device_id = None

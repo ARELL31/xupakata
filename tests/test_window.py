@@ -78,6 +78,18 @@ def test_ficha_de_memoria_usa_su_ilustracion(window):
     assert window._info_rows["type"].get_subtitle() == "Memoria RAM"
 
 
+def test_lista_sin_tarjetas_y_con_marca_de_seleccion(window):
+    assert "boxed-list" not in window.listbox.get_css_classes()
+    assert "device-list" in window.listbox.get_css_classes()
+
+    select(window, 0)
+    first = window.listbox.get_row_at_index(0)
+    second = window.listbox.get_row_at_index(1)
+
+    assert first.check.get_visible() is True
+    assert second.check.get_visible() is False
+
+
 def test_controles_desactivados_mientras_carga(window):
     window.listbox.select_row(window.listbox.get_row_at_index(1))
 
