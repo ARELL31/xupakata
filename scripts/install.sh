@@ -140,6 +140,7 @@ usage() {
 
 main() {
   [ "$#" -gt 0 ] || { usage; exit 1; }
+  [ "$(id -u)" -eq 0 ] && die "no ejecutes este script con sudo: eleva privilegios solo para APT, así uv y OpenRGB quedan en tu usuario"
   check_ubuntu
 
   for stage in "$@"; do

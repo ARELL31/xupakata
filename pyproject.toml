@@ -1,8 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "gnome-rgb"
 version = "0.1.0"
 description = "Control de iluminación RGB para GNOME"
 requires-python = ">=3.12"
+dependencies = ["openrgb-python"]
+
+[project.scripts]
+gnome-rgb = "gnome_rgb.application:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gnome_rgb"]
 
 [tool.ruff]
 line-length = 100
@@ -10,3 +21,4 @@ target-version = "py312"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
