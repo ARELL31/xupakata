@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <g fill="#2e3436">
+    <path fill-rule="evenodd" d="M2.6 4.1h10.8a1.6 1.6 0 0 1 1.6 1.6v4.6a1.6 1.6 0 0 1-1.6 1.6H2.6A1.6 1.6 0 0 1 1 10.3V5.7a1.6 1.6 0 0 1 1.6-1.6zm-.4 1.7v4.4h11.6V5.8z"/>
+    <circle cx="4.2" cy="7.2" r="0.8"/>
+    <circle cx="8" cy="7.2" r="0.8"/>
+    <circle cx="11.8" cy="7.2" r="0.8"/>
+    <rect x="5.6" y="8.9" width="4.8" height="1" rx="0.5"/>
+  </g>
+</svg>

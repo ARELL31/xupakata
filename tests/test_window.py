@@ -70,6 +70,14 @@ def test_seleccion_actualiza_el_panel(window):
     assert "Teclado" in window.title.get_text()
 
 
+def test_ficha_de_memoria_usa_su_ilustracion(window):
+    select(window, 2)
+
+    assert "Memoria RAM" in window.subtitle.get_text()
+    assert window._illustration_kind == "dram"
+    assert window._info_rows["type"].get_subtitle() == "Memoria RAM"
+
+
 def test_controles_desactivados_mientras_carga(window):
     window.listbox.select_row(window.listbox.get_row_at_index(1))
 
@@ -97,7 +105,7 @@ def test_resultado_de_otra_seleccion_no_toca_el_panel(window):
 
 def test_resultado_obsoleto_no_cambia_estado(window):
     select(window, 1)
-    before = (window._panel, window.status.get_text(), window.device_id)
+    before = (window._panel, window._message, window.device_id)
 
     window._finish(
         window._generation,
@@ -110,7 +118,7 @@ def test_resultado_obsoleto_no_cambia_estado(window):
         None,
     )
 
-    assert (window._panel, window.status.get_text(), window.device_id) == before
+    assert (window._panel, window._message, window.device_id) == before
 
 
 def test_restauracion_ambigua_no_elige(window):
@@ -119,7 +127,7 @@ def test_restauracion_ambigua_no_elige(window):
     assert wait_for(lambda: window._panel is Panel.NO_SELECTION, timeout=3.0)
 
     assert window.device_id is None
-    assert "varias coincidencias" in window.status.get_text()
+    assert "varias coincidencias" in window._message
 
 
 def test_cambiar_de_dispositivo_cancela_brillo(window):
@@ -147,7 +155,7 @@ def test_color_abierto_para_otro_dispositivo_se_descarta(window):
 
     window._apply_color(target, Gdk.RGBA(red=1.0, green=0.0, blue=0.0, alpha=1.0))
 
-    assert "Se descartó el color" in window.status.get_text()
+    assert "Se descartó el color" in window._message
 
 
 def test_un_solo_reintento_automatico_por_incidente(window):
@@ -167,7 +175,7 @@ def test_sin_bucle_de_reconexion(window):
 
     assert window._generation == generation
     assert window._panel is Panel.ERROR
-    assert "Reconectar" in window.status.get_text()
+    assert "Reconectar" in window._message
 
 
 def test_cierre_durante_trabajo_termina(window):
@@ -194,5 +202,5 @@ def test_callback_tras_cierre_se_ignora(window):
 
     window._finish(generation, revision, window.request_id, "fake:0", None, "aplicado", None, None)
 
-    assert window.status.get_text() != "aplicado"
+    assert window._message != "aplicado"
     assert not window.worker._thread.is_alive()

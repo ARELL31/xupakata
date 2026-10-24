@@ -33,6 +33,19 @@ def test_iconos_existen_para_el_id():
     assert (ROOT / "snap/gui/icon.png").is_file()
 
 
+def test_iconos_de_dispositivo_e_ilustraciones_existen():
+    icons = ROOT / "data/icons/hicolor/symbolic/apps"
+    for kind in ("dram", "cooler", "keyboard", "mouse", "ledstrip", "generic"):
+        assert (icons / f"xupakata-{kind}-symbolic.svg").is_file()
+
+    illustrations = ROOT / "data/illustrations/hardware"
+    assert (illustrations / "dram.svg").is_file()
+    assert (illustrations / "generic.svg").is_file()
+
+    snap = (ROOT / "snap/snapcraft.yaml").read_text()
+    assert "usr/share/xupakata/illustrations" in snap
+
+
 def test_snap_usa_el_mismo_id_y_nombre():
     snap = (ROOT / "snap/snapcraft.yaml").read_text()
     assert snap.startswith("name: xupakata\n")

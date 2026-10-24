@@ -18,9 +18,16 @@ def mode(name, color_mode, brightness_min=0, brightness_max=100, brightness=50):
 
 
 class FakeDevice:
-    def __init__(self, color_mode=utils.ModeColors.PER_LED, device_id=0, modes=None):
+    def __init__(
+        self,
+        color_mode=utils.ModeColors.PER_LED,
+        device_id=0,
+        modes=None,
+        device_type=utils.DeviceType.DRAM,
+    ):
         self.id = device_id
         self.name = "ENE DRAM"
+        self.type = device_type
         self.metadata = SimpleNamespace(
             vendor="ENE",
             description="ENE SMBus Device",
@@ -101,6 +108,7 @@ def test_info_expone_capacidades(monkeypatch):
 
     info = client.info(ref)
 
+    assert info["type"] == "dram"
     assert info["modes"] == ["Direct", "Rainbow"]
     assert info["mode"] == "Direct"
     assert info["color_supported"] is True
@@ -149,6 +157,7 @@ def test_devices_expone_identidad(monkeypatch):
 
     assert [device["id"] for device in devices] == ["1:0", "1:1"]
     assert all(device["name"] == "ENE DRAM" for device in devices)
+    assert all(device["type"] == "dram" for device in devices)
     assert all(device["vendor"] == "ENE" for device in devices)
 
 

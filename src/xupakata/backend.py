@@ -50,6 +50,7 @@ class Unconfirmed(BackendError):
 class DeviceSummary(TypedDict):
     id: str
     name: str
+    type: str
     vendor: str
     serial: str
     location: str
@@ -58,6 +59,7 @@ class DeviceSummary(TypedDict):
 class DeviceInfo(TypedDict):
     id: str
     name: str
+    type: str
     vendor: str
     serial: str
     location: str
@@ -67,6 +69,14 @@ class DeviceInfo(TypedDict):
     has_brightness: bool
     brightness: int
     color: tuple[int, int, int] | None
+
+
+def _type_name(device) -> str:
+    """Categoría estable del dispositivo, independiente del nombre comercial."""
+    try:
+        return utils.DeviceType(device.type).name.lower()
+    except (AttributeError, TypeError, ValueError):
+        return "unknown"
 
 
 def _meta(device, field: str) -> str:
@@ -177,6 +187,7 @@ class RgbBackend:
                 {
                     "id": _ref(self._epoch, device),
                     "name": device.name,
+                    "type": _type_name(device),
                     "vendor": _meta(device, "vendor"),
                     "serial": _meta(device, "serial"),
                     "location": _meta(device, "location"),
@@ -209,6 +220,7 @@ class RgbBackend:
             return {
                 "id": ref,
                 "name": device.name,
+                "type": _type_name(device),
                 "vendor": _meta(device, "vendor"),
                 "serial": _meta(device, "serial"),
                 "location": _meta(device, "location"),
@@ -286,6 +298,7 @@ class FakeBackend:
             {
                 "id": "fake:0",
                 "name": "Ventilador (simulado)",
+                "type": "cooler",
                 "vendor": "Demo",
                 "serial": "SIM-0001",
                 "location": "USB demo, address 0x2e",
@@ -293,9 +306,18 @@ class FakeBackend:
             {
                 "id": "fake:1",
                 "name": "Teclado (simulado)",
+                "type": "keyboard",
                 "vendor": "Demo",
                 "serial": "SIM-0002",
                 "location": "USB demo, address 0x30",
+            },
+            {
+                "id": "fake:2",
+                "name": "ENE DRAM (simulada)",
+                "type": "dram",
+                "vendor": "Demo",
+                "serial": "SIM-0003",
+                "location": "I2C demo (/dev/i2c-0), address 0x70",
             },
         ]
         self._state = {
@@ -320,6 +342,7 @@ class FakeBackend:
         return {
             "id": ref,
             "name": device["name"],
+            "type": device["type"],
             "vendor": device["vendor"],
             "serial": device["serial"],
             "location": device["location"],

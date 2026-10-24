@@ -44,7 +44,7 @@ parts:
     plugin: python
     source: .
     build-environment:
-      - PARTS_PYTHON_INTERPRETER: /usr/bin/python3
+      - PARTS_PYTHON_INTERPRETER: python3
     build-packages:
       - python3-venv
     stage-packages:
@@ -60,7 +60,12 @@ parts:
         "$CRAFT_PART_INSTALL/usr/share/applications/io.github.ARELL31.Xupakata.desktop"
       install -Dm644 data/io.github.ARELL31.Xupakata.metainfo.xml \
         "$CRAFT_PART_INSTALL/usr/share/metainfo/io.github.ARELL31.Xupakata.metainfo.xml"
-      install -Dm644 data/icons/hicolor/scalable/apps/io.github.ARELL31.Xupakata.svg \
-        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/io.github.ARELL31.Xupakata.svg"
-      install -Dm644 data/icons/hicolor/symbolic/apps/io.github.ARELL31.Xupakata-symbolic.svg \
-        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/symbolic/apps/io.github.ARELL31.Xupakata-symbolic.svg"
+      install -d "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps" \
+        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/symbolic/apps" \
+        "$CRAFT_PART_INSTALL/usr/share/xupakata/illustrations/hardware"
+      install -m644 data/icons/hicolor/scalable/apps/io.github.ARELL31.Xupakata.svg \
+        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/"
+      install -m644 data/icons/hicolor/symbolic/apps/*.svg \
+        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/symbolic/apps/"
+      install -m644 data/illustrations/hardware/*.svg \
+        "$CRAFT_PART_INSTALL/usr/share/xupakata/illustrations/hardware/"

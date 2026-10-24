@@ -4,7 +4,9 @@ Solo el hilo del trabajador toca el SDK. Cada tarea captura su generación,
 selección y solicitud; los resultados obsoletos se descartan.
 """
 import contextlib
+import os
 from enum import Enum
+from pathlib import Path
 
 import gi
 
@@ -16,6 +18,38 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from .backend import ConnectionLost, DeviceGone, ServerUnavailable, connect
 from .i18n import _, plural
 from .worker import Worker
+
+DEVICE_ICONS = {
+    "cooler": "xupakata-cooler-symbolic",
+    "dram": "xupakata-dram-symbolic",
+    "keyboard": "xupakata-keyboard-symbolic",
+    "keypad": "xupakata-keyboard-symbolic",
+    "ledstrip": "xupakata-ledstrip-symbolic",
+    "light": "xupakata-ledstrip-symbolic",
+    "mouse": "xupakata-mouse-symbolic",
+}
+
+DEVICE_NAMES = {
+    "accessory": _("Accesorio"),
+    "case": _("Caja"),
+    "cooler": _("Refrigeración"),
+    "dram": _("Memoria RAM"),
+    "gamepad": _("Mando"),
+    "gpu": _("Tarjeta gráfica"),
+    "headset": _("Auriculares"),
+    "headset_stand": _("Soporte de auriculares"),
+    "keyboard": _("Teclado"),
+    "keypad": _("Teclado numérico"),
+    "ledstrip": _("Tira LED"),
+    "light": _("Iluminación"),
+    "microphone": _("Micrófono"),
+    "motherboard": _("Placa base"),
+    "mouse": _("Ratón"),
+    "mousemat": _("Alfombrilla"),
+    "speaker": _("Altavoz"),
+    "storage": _("Almacenamiento"),
+    "virtual": _("Virtual"),
+}
 
 
 class Connection(Enum):
@@ -37,7 +71,7 @@ class Panel(Enum):
 def _subtitle(device) -> str:
     """Bus y dirección: distingue dispositivos del mismo nombre.
 
-    La ubicación completa queda en el tooltip.
+    La ubicación completa queda en la ficha y en el tooltip.
     """
     location = device["location"]
     parts = []
@@ -59,10 +93,29 @@ def _matches(device, wanted) -> bool:
     return True
 
 
-def _label(text: str, widget) -> Gtk.Label:
-    label = Gtk.Label(label=text, xalign=0, use_underline=True)
-    label.set_mnemonic_widget(widget)
-    return label
+def _resource(*parts: str) -> str:
+    """Ruta de un recurso instalado, o la del árbol de trabajo en desarrollo."""
+    root = os.environ.get("SNAP")
+    if root:
+        return os.path.join(root, "usr", "share", "xupakata", *parts)
+    return str(Path(__file__).resolve().parents[2] / "data" / Path(*parts))
+
+
+def _illustration(kind: str) -> str:
+    name = "dram" if kind == "dram" else "generic"
+    return _resource("illustrations", "hardware", f"{name}.svg")
+
+
+def _device_icon(kind: str) -> str:
+    return DEVICE_ICONS.get(kind, "xupakata-generic-symbolic")
+
+
+def _device_name(kind: str) -> str:
+    return DEVICE_NAMES.get(kind, _("Dispositivo RGB"))
+
+
+def _hex(color) -> str:
+    return "#{:02X}{:02X}{:02X}".format(*color)
 
 
 class RgbWindow(Adw.ApplicationWindow):
@@ -71,7 +124,7 @@ class RgbWindow(Adw.ApplicationWindow):
             application=app,
             title="xupakata",
             default_width=900,
-            default_height=600,
+            default_height=620,
         )
 
         self.backend = None
@@ -87,8 +140,12 @@ class RgbWindow(Adw.ApplicationWindow):
         self._restore = None
         self._closing = False
         self._auto_reconnect_used = False
+        self._message = ""
+        self._rgba = None
+        self._illustration_kind = None
 
         self.worker = Worker()
+        self._add_icon_paths()
 
         header = Adw.HeaderBar()
         self.back_button = Gtk.Button(icon_name="go-previous-symbolic")
@@ -111,87 +168,17 @@ class RgbWindow(Adw.ApplicationWindow):
         menu.append(_("_Salir"), "app.quit")
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
         menu_button.set_tooltip_text(_("Menú principal"))
-        menu_button.update_property(
-            [Gtk.AccessibleProperty.LABEL], [_("Menú principal")]
-        )
+        menu_button.update_property([Gtk.AccessibleProperty.LABEL], [_("Menú principal")])
         header.pack_end(menu_button)
 
-        self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
-        self.listbox.add_css_class("boxed-list")
-        self.listbox.connect("row-selected", self._on_row_selected)
-        sidebar = Gtk.ScrolledWindow(
-            child=self.listbox, hscrollbar_policy=Gtk.PolicyType.NEVER
-        )
+        self._build_sidebar()
+        self._build_content()
 
-        self.title = Gtk.Label(label="", wrap=True)
-        self.title.add_css_class("title-4")
-
-        self.spinner = Gtk.Spinner()
-        self.status = Gtk.Label(label=_("Conectando con OpenRGB…"), wrap=True)
-        status_box = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
-        status_box.append(self.spinner)
-        status_box.append(self.status)
-
-        self._rgba = None
-        self._color_dialog = Gtk.ColorDialog(title=_("Color"))
-
-        self.color_button = Gtk.Button()
-        self.color_button.set_child(self._build_swatch())
-        self.color_button.update_property(
-            [Gtk.AccessibleProperty.LABEL], [_("Color del dispositivo")]
-        )
-        self.color_button.connect("clicked", self._on_color_clicked)
-
-        self.mode_dropdown = Gtk.DropDown()
-        self.mode_dropdown.update_property(
-            [Gtk.AccessibleProperty.LABEL], [_("Modo de iluminación")]
-        )
-        self.mode_dropdown.connect("notify::selected", self._on_mode)
-
-        self.brightness = Gtk.Scale(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            adjustment=Gtk.Adjustment(lower=0, upper=100, step_increment=1),
-            width_request=200,
-            draw_value=True,
-            digits=0,
-        )
-        self.brightness.update_property(
-            [Gtk.AccessibleProperty.LABEL], [_("Brillo")]
-        )
-        self.brightness.connect("value-changed", self._on_brightness)
-
-        self.brightness_label = _label(_("_Brillo"), self.brightness)
-        grid = Gtk.Grid(row_spacing=12, column_spacing=12)
-        rows = [
-            (_label(_("_Color"), self.color_button), self.color_button),
-            (_label(_("_Modo"), self.mode_dropdown), self.mode_dropdown),
-            (self.brightness_label, self.brightness),
-        ]
-        for position, (label, widget) in enumerate(rows):
-            grid.attach(label, 0, position, 1, 1)
-            grid.attach(widget, 1, position, 1, 1)
-
-        panel = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=18,
-            margin_top=24,
-            margin_bottom=24,
-            margin_start=24,
-            margin_end=24,
-            valign=Gtk.Align.CENTER,
-            halign=Gtk.Align.CENTER,
-        )
-        panel.append(self.title)
-        panel.append(status_box)
-        panel.append(grid)
+        self.toast_overlay = Adw.ToastOverlay(child=self.stack)
 
         self.split = Adw.NavigationSplitView()
-        self.split.set_sidebar(
-            Adw.NavigationPage(title=_("Dispositivos"), child=sidebar)
-        )
-        self.split.set_content(
-            Adw.NavigationPage(title=_("Dispositivo"), child=panel)
-        )
+        self.split.set_sidebar(Adw.NavigationPage(title=_("Dispositivos"), child=self.sidebar))
+        self.split.set_content(Adw.NavigationPage(title=_("Dispositivo"), child=self.toast_overlay))
         self.split.connect("notify::collapsed", lambda *_: self._render_state())
         self.split.connect("notify::show-content", lambda *_: self._render_state())
 
@@ -206,30 +193,250 @@ class RgbWindow(Adw.ApplicationWindow):
 
         self.reload()
 
+    # --- construcción ---
+
+    def _add_icon_paths(self):
+        display = Gdk.Display.get_default()
+        if display is None:
+            return
+        theme = Gtk.IconTheme.get_for_display(display)
+        root = os.environ.get("SNAP")
+        if root:
+            theme.add_search_path(os.path.join(root, "usr", "share", "icons"))
+        else:
+            candidate = Path(__file__).resolve().parents[2] / "data" / "icons"
+            if candidate.is_dir():
+                theme.add_search_path(str(candidate))
+
+    def _build_sidebar(self):
+        self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.listbox.add_css_class("boxed-list")
+        self.listbox.connect("row-selected", self._on_row_selected)
+
+        self.device_count = Gtk.Label(label="", xalign=0)
+        self.device_count.add_css_class("dim-label")
+        self.device_count.set_margin_start(12)
+        self.device_count.set_margin_end(12)
+        self.device_count.set_margin_top(12)
+
+        scroller = Gtk.ScrolledWindow(
+            child=self.listbox, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True
+        )
+        scroller.set_margin_start(12)
+        scroller.set_margin_end(12)
+        scroller.set_margin_top(6)
+        scroller.set_margin_bottom(12)
+
+        self.sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.sidebar.append(self.device_count)
+        self.sidebar.append(scroller)
+        self.sidebar.set_size_request(280, -1)
+
+    def _build_content(self):
+        self.status_page = Adw.StatusPage(title="", description="")
+        self.status_spinner = Gtk.Spinner(halign=Gtk.Align.CENTER)
+        self.status_reconnect = Gtk.Button(label=_("Reconectar"), halign=Gtk.Align.CENTER)
+        self.status_reconnect.add_css_class("suggested-action")
+        self.status_reconnect.connect("clicked", lambda *_: self.reload())
+
+        self.picture = Gtk.Picture()
+        self.picture.set_size_request(132, 132)
+        self.picture.set_can_shrink(True)
+        self.picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+        self.picture.set_halign(Gtk.Align.CENTER)
+
+        self.title = Gtk.Label(label="", wrap=True, justify=Gtk.Justification.CENTER)
+        self.title.add_css_class("title-1")
+        self.title.set_xalign(0.5)
+
+        self.busy_spinner = Gtk.Spinner(visible=False)
+        title_box = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
+        title_box.append(self.title)
+        title_box.append(self.busy_spinner)
+
+        self.subtitle = Gtk.Label(label="", wrap=True, justify=Gtk.Justification.CENTER)
+        self.subtitle.add_css_class("dim-label")
+        self.subtitle.set_xalign(0.5)
+
+        self.banner = Adw.Banner(title="")
+        self.banner.set_revealed(False)
+
+        self._color_dialog = Gtk.ColorDialog(title=_("Color"))
+        self.group = Adw.PreferencesGroup(title=_("Iluminación"))
+
+        self.mode_row = Adw.ComboRow(title=_("Modo"))
+        self.mode_row.update_property(
+            [Gtk.AccessibleProperty.LABEL], [_("Modo de iluminación")]
+        )
+        self.mode_row.connect("notify::selected", self._on_mode)
+        self.mode_dropdown = self.mode_row
+
+        self.color_row = Adw.ActionRow(title=_("Color"))
+        self.color_row.set_activatable(True)
+        self.color_button = Gtk.DrawingArea()
+        self.color_button.set_content_width(38)
+        self.color_button.set_content_height(24)
+        self.color_button.set_draw_func(self._draw_swatch)
+        self.color_button.set_valign(Gtk.Align.CENTER)
+        self.color_row.add_suffix(self.color_button)
+        self.color_row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+        self.color_row.connect("activated", self._on_color_clicked)
+        self.swatch = self.color_button
+
+        self.brightness = Gtk.Scale(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            adjustment=Gtk.Adjustment(lower=0, upper=100, step_increment=1),
+            width_request=170,
+            draw_value=True,
+            digits=0,
+            valign=Gtk.Align.CENTER,
+        )
+        self.brightness.update_property([Gtk.AccessibleProperty.LABEL], [_("Brillo")])
+        self.brightness.connect("value-changed", self._on_brightness)
+        self.brightness_row = Adw.ActionRow(title=_("Brillo"))
+        self.brightness_row.add_suffix(self.brightness)
+        self.brightness_row.set_activatable_widget(self.brightness)
+
+        self.group.add(self.mode_row)
+        self.group.add(self.color_row)
+        self.group.add(self.brightness_row)
+
+        self.info_expander = Adw.ExpanderRow(title=_("Información del dispositivo"))
+        self._info_rows = {}
+        for key, label in (
+            ("type", _("Tipo")),
+            ("vendor", _("Fabricante")),
+            ("name", _("Nombre reportado")),
+            ("serial", _("Número de serie")),
+            ("location", _("Ubicación")),
+        ):
+            row = Adw.ActionRow(title=label)
+            row.set_subtitle_selectable(True)
+            self.info_expander.add_row(row)
+            self._info_rows[key] = row
+
+        device_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=18,
+            margin_bottom=24,
+            margin_start=12,
+            margin_end=12,
+        )
+        device_box.append(self.picture)
+        device_box.append(title_box)
+        device_box.append(self.subtitle)
+        device_box.append(self.banner)
+        device_box.append(self.group)
+        device_box.append(self.info_expander)
+
+        clamp = Adw.Clamp(maximum_size=520, tightening_threshold=420)
+        clamp.set_child(device_box)
+        scroller = Gtk.ScrolledWindow(
+            child=clamp, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True
+        )
+
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        self.stack.add_named(self.status_page, "status")
+        self.stack.add_named(scroller, "device")
+
+    def _draw_swatch(self, _area, cr, width, height):
+        radius = 5
+        cr.new_sub_path()
+        cr.arc(width - radius, radius, radius, -1.5708, 0)
+        cr.arc(width - radius, height - radius, radius, 0, 1.5708)
+        cr.arc(radius, height - radius, radius, 1.5708, 3.1416)
+        cr.arc(radius, radius, radius, 3.1416, 4.7124)
+        cr.close_path()
+        if self._rgba is None:
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.18)
+        else:
+            cr.set_source_rgba(self._rgba.red, self._rgba.green, self._rgba.blue, 1.0)
+        cr.fill_preserve()
+        cr.set_source_rgba(0, 0, 0, 0.18)
+        cr.set_line_width(1)
+        cr.stroke()
+
     # --- presentación ---
 
     def _render_state(self):
         """Único lugar que habilita/deshabilita controles según el estado."""
+        connected = self._state is Connection.CONNECTED
         editable = self._panel is Panel.READY
-        self.spinner.set_visible(
-            self._state in (Connection.CONNECTING, Connection.RECONNECTING)
-        )
-        if self.spinner.get_visible():
-            self.spinner.start()
-        else:
-            self.spinner.stop()
-        self.listbox.set_sensitive(self._state is Connection.CONNECTED)
+        busy = self._panel in (Panel.LOADING, Panel.APPLYING)
+        self.listbox.set_sensitive(connected)
 
         has_color = self._caps.get("color", False)
         self.color_button.set_sensitive(editable and has_color)
-        self.mode_dropdown.set_sensitive(editable and self._caps.get("modes", False))
-        self.brightness.set_visible(self._caps.get("brightness", False))
-        self.brightness_label.set_visible(self._caps.get("brightness", False))
-        self.brightness.set_sensitive(editable and self._caps.get("brightness", False))
+        self.color_row.set_sensitive(editable and has_color)
+        self.mode_row.set_sensitive(editable and bool(self._caps.get("modes")))
 
-        self.back_button.set_visible(
-            self.split.get_collapsed() and self.split.get_show_content()
-        )
+        has_brightness = self._caps.get("brightness", False)
+        self.brightness_row.set_visible(has_brightness)
+        self.brightness.set_sensitive(editable and has_brightness)
+
+        self.back_button.set_visible(self.split.get_collapsed() and self.split.get_show_content())
+        self.busy_spinner.set_visible(busy and self.device_id is not None)
+        if busy:
+            self.busy_spinner.start()
+        else:
+            self.busy_spinner.stop()
+
+        self.banner.set_title(self._message)
+        self.banner.set_revealed(self._panel is Panel.ERROR and bool(self._message))
+
+        if self._state in (Connection.CONNECTING, Connection.RECONNECTING):
+            self._show_status(
+                _("Conectando con OpenRGB…"),
+                _("Buscando el servidor local en 127.0.0.1:6742."),
+                spinner=True,
+            )
+        elif self._state is Connection.FAILED:
+            self._show_status(
+                _("No se pudo conectar con OpenRGB"),
+                self._message or _("Comprueba que el servidor OpenRGB esté iniciado."),
+                icon="network-offline-symbolic",
+                action=True,
+            )
+        elif self._panel is Panel.EMPTY:
+            self._show_status(
+                _("No hay dispositivos"),
+                _("OpenRGB no detectó dispositivos. Revisa sus permisos y vuelve a intentarlo."),
+                icon="view-list-symbolic",
+                action=True,
+            )
+        elif self.device_id is None:
+            self._show_status(
+                _("Selecciona un dispositivo"),
+                self._message or _("Elige un dispositivo para controlar su iluminación."),
+                icon="go-next-symbolic",
+            )
+        elif self._panel is Panel.ERROR and not self._caps:
+            self._show_status(
+                _("No se pudo leer el dispositivo"),
+                self._message,
+                icon="dialog-warning-symbolic",
+                action=True,
+            )
+        else:
+            self.stack.set_visible_child_name("device")
+
+    def _show_status(self, title, description, *, icon="", spinner=False, action=False):
+        self.status_page.set_title(title)
+        self.status_page.set_description(description or "")
+        self.status_page.set_icon_name(icon or None)
+        if spinner:
+            self.status_spinner.start()
+            self.status_page.set_child(self.status_spinner)
+        else:
+            self.status_spinner.stop()
+            self.status_page.set_child(self.status_reconnect if action else None)
+        self.stack.set_visible_child_name("status")
+
+    def _toast(self, message):
+        toast = Adw.Toast(title=message)
+        toast.set_timeout(3)
+        self.toast_overlay.add_toast(toast)
 
     # --- conexión ---
 
@@ -240,8 +447,8 @@ class RgbWindow(Adw.ApplicationWindow):
             if self._auto_reconnect_used:
                 self._state = Connection.FAILED
                 self._panel = Panel.ERROR
-                self.status.set_text(
-                    _("OpenRGB sigue sin responder. Usa Reconectar para intentarlo de nuevo.")
+                self._message = _(
+                    "OpenRGB sigue sin responder. Usa Reconectar para intentarlo de nuevo."
                 )
                 self._render_state()
                 return
@@ -254,12 +461,11 @@ class RgbWindow(Adw.ApplicationWindow):
         self.device_id = None
         self._caps = {}
         self._panel = Panel.EMPTY
+        self._message = ""
         self._state = Connection.RECONNECTING if reconnecting else Connection.CONNECTING
         self._cancel_brightness()
         self.listbox.remove_all()
-        self.status.set_text(
-            _("Reconectando con OpenRGB…") if reconnecting else _("Conectando con OpenRGB…")
-        )
+        self.device_count.set_text("")
         self._render_state()
 
         def job():
@@ -291,8 +497,8 @@ class RgbWindow(Adw.ApplicationWindow):
             return False
         self._state = Connection.FAILED
         self._panel = Panel.EMPTY
+        self._message = _("No se pudo conectar: %(error)s") % {"error": error}
         self._render_state()
-        self.status.set_text(_("No se pudo conectar: %(error)s") % {"error": error})
         return False
 
     def _recover(self, message):
@@ -302,9 +508,9 @@ class RgbWindow(Adw.ApplicationWindow):
         if self._auto_reconnect_used:
             self._state = Connection.FAILED
             self._panel = Panel.ERROR
-            self.status.set_text(
-                _("%(error)s. Usa Reconectar para intentarlo de nuevo.") % {"error": message}
-            )
+            self._message = _("%(error)s. Usa Reconectar para intentarlo de nuevo.") % {
+                "error": message
+            }
             self._render_state()
             return
         self.reload(reconnecting=True, automatic=True)
@@ -320,7 +526,6 @@ class RgbWindow(Adw.ApplicationWindow):
 
         if not devices:
             self._panel = Panel.EMPTY
-            self.status.set_text(_("No se encontraron dispositivos OpenRGB"))
             self._render_state()
             return False
 
@@ -342,10 +547,13 @@ class RgbWindow(Adw.ApplicationWindow):
             row = Adw.ActionRow(title=title, subtitle=_subtitle(device))
             row.set_subtitle_lines(1)
             row.set_tooltip_text(device["location"] or device["vendor"])
+            icon = Gtk.Image.new_from_icon_name(_device_icon(device.get("type", "")))
+            icon.set_pixel_size(24)
+            row.add_prefix(icon)
             row.device = device
             self.listbox.append(row)
 
-        self.status.set_text(
+        self.device_count.set_text(
             plural(len(devices), "%(count)d dispositivo", "%(count)d dispositivos")
         )
         self._render_state()
@@ -367,7 +575,7 @@ class RgbWindow(Adw.ApplicationWindow):
                 self.listbox.select_row(rows[0])
             else:
                 self._panel = Panel.NO_SELECTION
-                self.status.set_text(_("Selecciona un dispositivo"))
+                self._message = ""
                 self._render_state()
             return
 
@@ -379,11 +587,11 @@ class RgbWindow(Adw.ApplicationWindow):
         self.listbox.unselect_all()
         self._panel = Panel.NO_SELECTION
         if matches:
-            self.status.set_text(
-                _("Selecciona nuevamente el dispositivo: hay varias coincidencias")
+            self._message = _(
+                "Hay varias coincidencias. Selecciona nuevamente el dispositivo."
             )
         else:
-            self.status.set_text(_("El dispositivo anterior ya no está disponible"))
+            self._message = _("El dispositivo anterior ya no está disponible.")
         self._render_state()
 
     # --- selección ---
@@ -392,19 +600,22 @@ class RgbWindow(Adw.ApplicationWindow):
         self.selection_revision += 1
         revision = self.selection_revision
         self._cancel_brightness()
+        self._message = ""
 
         if row is None or self.backend is None:
             self.device_id = None
             self._caps = {}
             self._panel = Panel.EMPTY if self.backend is None else Panel.NO_SELECTION
             self.title.set_text("")
+            self.subtitle.set_text("")
             self._render_state()
             return
 
         self.device_id = row.device["id"]
         self._caps = {}
         self._panel = Panel.LOADING
-        self.status.set_text(_("Obteniendo estado…"))
+        self.title.set_text(row.get_title())
+        self.subtitle.set_text(_subtitle(row.device))
         if self.split.get_collapsed():
             self.split.set_show_content(True)
         self._render_state()
@@ -433,7 +644,7 @@ class RgbWindow(Adw.ApplicationWindow):
             self._recover(str(error))
             return False
         self._panel = Panel.ERROR
-        self.status.set_text(_("No se pudo leer el dispositivo: %(error)s") % {"error": error})
+        self._message = _("No se pudo leer el dispositivo: %(error)s") % {"error": error}
         self._render_state()
         return False
 
@@ -448,14 +659,25 @@ class RgbWindow(Adw.ApplicationWindow):
             "location": info["location"],
         }
         self._panel = Panel.READY
-        self.status.set_text("")
+        self._message = ""
         self._render_state()
         return False
 
     def _show_info(self, info):
         self._loading = True
+        kind = info.get("type", "")
         subtitle = _subtitle(info)
-        self.title.set_text(f"{info['name']} · {subtitle}" if subtitle else info["name"])
+        self.title.set_text(info["name"])
+        self.subtitle.set_text(
+            f"{_device_name(kind)} · {subtitle}" if subtitle else _device_name(kind)
+        )
+
+        if kind != self._illustration_kind:
+            path = _illustration(kind)
+            if not os.path.exists(path):
+                path = _illustration("generic")
+            self.picture.set_filename(path)
+            self._illustration_kind = kind
 
         if info["color"]:
             red, green, blue = info["color"]
@@ -466,27 +688,36 @@ class RgbWindow(Adw.ApplicationWindow):
                 blue / 255,
                 1.0,
             )
-            self.swatch.queue_draw()
         else:
             self._rgba = None
-            self.swatch.queue_draw()
+        self.swatch.queue_draw()
 
-        self.mode_dropdown.set_model(Gtk.StringList(strings=info["modes"]))
+        self.mode_row.set_model(Gtk.StringList(strings=info["modes"]))
         if info["mode"] in info["modes"]:
-            self.mode_dropdown.set_selected(info["modes"].index(info["mode"]))
+            self.mode_row.set_selected(info["modes"].index(info["mode"]))
 
         self._caps = {
             "color": info["color_supported"],
             "modes": bool(info["modes"]),
             "brightness": info["has_brightness"],
         }
+
         if not info["color_supported"]:
+            self.color_row.set_subtitle(_("Controlado por el modo actual"))
             tooltip = _("Este modo no admite color manual. Selecciona otro modo para cambiarlo.")
         elif info["color"] is None:
+            self.color_row.set_subtitle(_("No disponible"))
             tooltip = _("OpenRGB no reporta el color actual")
         else:
-            tooltip = None
-        self.color_button.set_tooltip_text(tooltip)
+            self.color_row.set_subtitle(_hex(info["color"]))
+            tooltip = _("Elegir color")
+        self.color_row.set_tooltip_text(tooltip)
+
+        self._info_rows["type"].set_subtitle(_device_name(kind))
+        for key in ("vendor", "name", "serial", "location"):
+            self._info_rows[key].set_subtitle(info[key] or "—")
+        self.info_expander.set_subtitle(subtitle)
+
         self.brightness.set_value(info["brightness"])
         self._loading = False
 
@@ -501,7 +732,6 @@ class RgbWindow(Adw.ApplicationWindow):
         self.request_id += 1
         request = self.request_id
         self._panel = Panel.APPLYING
-        self.status.set_text(_("Enviando cambios…"))
         self._render_state()
 
         def job():
@@ -544,46 +774,29 @@ class RgbWindow(Adw.ApplicationWindow):
 
         if error is not None:
             self._panel = Panel.ERROR
-            self.status.set_text(_("No se pudo aplicar: %(error)s") % {"error": error})
+            self._message = _("No se pudo aplicar: %(error)s") % {"error": error}
             if isinstance(error, (ConnectionLost, DeviceGone, ServerUnavailable)):
                 self._recover(str(error))
                 return False
         elif read_error is not None:
             self._panel = Panel.ERROR
-            self.status.set_text(
-                _("El cambio se envió, pero no se pudo consultar el estado")
-            )
+            self._message = _("El cambio se envió, pero no se pudo consultar el estado")
             if isinstance(read_error, (ConnectionLost, DeviceGone, ServerUnavailable)):
                 self._recover(str(read_error))
                 return False
         else:
             self._panel = Panel.READY
-            self.status.set_text(message)
+            self._message = ""
+            self._toast(message)
         self._render_state()
         return False
-
-    def _build_swatch(self):
-        self.swatch = Gtk.DrawingArea()
-        self.swatch.set_content_width(36)
-        self.swatch.set_content_height(20)
-        self.swatch.set_draw_func(self._draw_swatch)
-        return self.swatch
-
-    def _draw_swatch(self, _area, cr, width, height):
-        if self._rgba is None:
-            return
-        cr.set_source_rgba(self._rgba.red, self._rgba.green, self._rgba.blue, 1.0)
-        cr.rectangle(0, 0, width, height)
-        cr.fill()
 
     def _on_color_clicked(self, _button):
         if self.device_id is None or self._closing:
             return
         target = (self._generation, self.selection_revision, self.device_id)
         initial = self._rgba or Gdk.RGBA(red=1.0, green=1.0, blue=1.0, alpha=1.0)
-        self._color_dialog.choose_rgba(
-            self, initial, None, self._on_color_chosen, target
-        )
+        self._color_dialog.choose_rgba(self, initial, None, self._on_color_chosen, target)
 
     def _on_color_chosen(self, dialog, result, target):
         if self._closing:
@@ -598,13 +811,13 @@ class RgbWindow(Adw.ApplicationWindow):
         if self._closing:
             return
         if target != (self._generation, self.selection_revision, self.device_id):
-            self.status.set_text(
-                _("Se descartó el color: cambió el dispositivo seleccionado")
-            )
+            self._message = _("Se descartó el color: cambió el dispositivo seleccionado")
+            self._render_state()
             return
         self._rgba = rgba
         self.swatch.queue_draw()
         rgb = tuple(round(value * 255) for value in (rgba.red, rgba.green, rgba.blue))
+        self.color_row.set_subtitle(_hex(rgb))
         ref = self.device_id
         backend = self.backend
         self._apply(

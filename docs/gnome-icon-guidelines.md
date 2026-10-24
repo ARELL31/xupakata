@@ -14,7 +14,10 @@ oficial: <https://developer.gnome.org/hig/>.
 ## Iconos simbólicos
 
 - Documento de 16 × 16 con `viewBox="0 0 16 16"` y `width="16" height="16"`.
-- Monocromáticos: `fill`/`stroke` en negro (`#000`) o `currentColor`; GTK los recolorea.
+- Monocromáticos: `fill` en negro (`#2e3436`); GTK los recolorea.
+- Usar formas rellenas, no trazos. GTK interpreta los simbólicos como máscaras:
+  un `stroke` se convierte en una silueta sólida y se pierden los detalles.
+  Los huecos se consiguen con subtrazados y `fill-rule="evenodd"`.
 - Sin degradados, sin sombras, sin perspectiva.
 - Trazos principales de 2 px; evitar 1 px salvo para detalles secundarios.
 - Geometría ortogonal y alineada a la cuadrícula de 1 px (0.5 px para trazos de 2 px).

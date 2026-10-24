@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <g id="casing">
+    <rect x="22" y="26" width="84" height="76" rx="10" fill="#3d3846"/>
+    <rect x="22" y="26" width="84" height="12" rx="10" fill="#5e5c64"/>
+    <rect x="30" y="38" width="68" height="56" rx="6" fill="#241f31"/>
+    <path d="M22 92 h84 v4 a6 6 0 0 1 -6 6 H28 a6 6 0 0 1 -6 -6 z" fill="#241f31"/>
+  </g>
+  <g id="leds">
+    <circle cx="64" cy="66" r="17" fill="none" stroke="#3584e4" stroke-width="4"/>
+    <circle cx="46" cy="52" r="2.6" fill="#3584e4"/>
+    <circle cx="82" cy="52" r="2.6" fill="#3584e4"/>
+    <circle cx="46" cy="80" r="2.6" fill="#3584e4"/>
+    <circle cx="82" cy="80" r="2.6" fill="#3584e4"/>
+  </g>
+</svg>
