@@ -25,8 +25,12 @@ class RgbBackend:
 
     def set_color(self, index: int, red: int, green: int, blue: int) -> None:
         try:
-            self._client.devices[index].set_color(utils.RGBColor(red, green, blue))
-        except (OSError, IndexError) as exc:
+            device = self._client.devices[index]
+            if device.modes[device.active_mode].color_mode == utils.ModeColors.NONE:
+                # Rainbow, Spectrum Cycle… no aceptan color por LED: no se envía nada.
+                device.set_mode("Direct")
+            device.set_color(utils.RGBColor(red, green, blue))
+        except (OSError, IndexError, ValueError) as exc:
             raise BackendError(str(exc)) from exc
 
 
