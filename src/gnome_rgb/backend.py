@@ -13,6 +13,13 @@ class BackendError(Exception):
     """No se pudo hablar con el servidor OpenRGB."""
 
 
+def _address(device) -> str:
+    """Dirección SMBus del dispositivo (p. ej. 0x70), si la reporta."""
+    location = device.metadata.location or ""
+    _, _, tail = location.partition("address ")
+    return tail.strip()
+
+
 class RgbBackend:
     def __init__(self, host: str = HOST, port: int = PORT):
         try:
@@ -20,8 +27,11 @@ class RgbBackend:
         except OSError as exc:
             raise BackendError(f"servidor OpenRGB no disponible en {host}:{port}") from exc
 
-    def devices(self) -> list[str]:
-        return [device.name for device in self._client.devices]
+    def devices(self) -> list[dict]:
+        return [
+            {"name": device.name, "address": _address(device)}
+            for device in self._client.devices
+        ]
 
     def info(self, index: int) -> dict:
         device = self._client.devices[index]
@@ -30,12 +40,18 @@ class RgbBackend:
         brightness = 0
         if top and mode.brightness is not None:
             brightness = round(mode.brightness * 100 / top)
+        color = None
+        if device.colors:
+            first = device.colors[0]
+            color = (first.red, first.green, first.blue)
         return {
             "name": device.name,
+            "address": _address(device),
             "modes": [item.name for item in device.modes],
             "mode": mode.name,
             "has_brightness": top > 0,
             "brightness": brightness,
+            "color": color,
         }
 
     def set_color(self, index: int, red: int, green: int, blue: int) -> None:
@@ -75,16 +91,21 @@ class FakeBackend:
         self.mode = "Direct"
         self.brightness = 100
 
-    def devices(self) -> list[str]:
-        return ["Ventilador (simulado)", "Teclado (simulado)"]
+    def devices(self) -> list[dict]:
+        return [
+            {"name": "Ventilador (simulado)", "address": "0x2e"},
+            {"name": "Teclado (simulado)", "address": "0x30"},
+        ]
 
     def info(self, index: int) -> dict:
         return {
-            "name": self.devices()[index],
+            "name": self.devices()[index]["name"],
+            "address": self.devices()[index]["address"],
             "modes": self.modes,
             "mode": self.mode,
             "has_brightness": True,
             "brightness": self.brightness,
+            "color": self.colors.get(index, (229, 165, 10)),
         }
 
     def set_color(self, index: int, red: int, green: int, blue: int) -> None:

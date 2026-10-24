@@ -9,6 +9,10 @@ from gnome_rgb import backend
 class FakeDevice:
     def __init__(self, color_mode=utils.ModeColors.PER_LED):
         self.name = "ENE DRAM"
+        self.metadata = SimpleNamespace(
+            location="I2C: SMBus PIIX4 adapter port 0 at 0b00 (/dev/i2c-0), address 0x70"
+        )
+        self.colors = [SimpleNamespace(red=53, green=132, blue=228)]
         self.modes = [
             SimpleNamespace(
                 name="Direct",
@@ -75,6 +79,17 @@ def test_info_expone_modos_y_brillo(monkeypatch):
     assert info["mode"] == "Direct"
     assert info["has_brightness"] is True
     assert info["brightness"] == 50
+    assert info["address"] == "0x70"
+    assert info["color"] == (53, 132, 228)
+
+
+def test_devices_expone_direccion(monkeypatch):
+    client = install(monkeypatch, FakeDevice(), FakeDevice())
+
+    assert client.devices() == [
+        {"name": "ENE DRAM", "address": "0x70"},
+        {"name": "ENE DRAM", "address": "0x70"},
+    ]
 
 
 def test_set_brightness_escala_al_maximo(monkeypatch):

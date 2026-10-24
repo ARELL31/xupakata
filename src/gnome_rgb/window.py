@@ -6,7 +6,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 
 from .backend import connect
 
@@ -31,12 +31,15 @@ class RgbWindow(Adw.ApplicationWindow):
         header.pack_start(refresh)
 
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.listbox.add_css_class("boxed-list")
         self.listbox.connect("row-selected", self._on_row_selected)
         sidebar = Gtk.ScrolledWindow(
             child=self.listbox, hscrollbar_policy=Gtk.PolicyType.NEVER
         )
 
         self.status = Gtk.Label(label="Conectando…", wrap=True)
+        self.title = Gtk.Label(label="", wrap=True)
+        self.title.add_css_class("title-4")
 
         self.color_button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(title="Color"))
         self.color_button.connect("notify::rgba", self._on_color)
@@ -79,6 +82,7 @@ class RgbWindow(Adw.ApplicationWindow):
             valign=Gtk.Align.CENTER,
             halign=Gtk.Align.CENTER,
         )
+        panel.append(self.title)
         panel.append(self.status)
         panel.append(grid)
 
@@ -113,27 +117,23 @@ class RgbWindow(Adw.ApplicationWindow):
 
     def _loaded(self, backend):
         self.backend = backend
-        names = backend.devices()
-        if not names:
+        devices = backend.devices()
+        if not devices:
             self.status.set_text("OpenRGB no reportó dispositivos")
             return False
 
-        for index, name in enumerate(names):
-            row = Gtk.ListBoxRow()
-            row.index = index
-            row.set_child(
-                Gtk.Label(
-                    label=name,
-                    xalign=0,
-                    margin_start=12,
-                    margin_end=12,
-                    margin_top=8,
-                    margin_bottom=8,
-                )
+        for index, device in enumerate(devices):
+            address = device["address"]
+            row = Adw.ActionRow(
+                title=device["name"],
+                subtitle=f"SMBus {address}" if address else "",
             )
+            row.index = index
             self.listbox.append(row)
 
-        self.status.set_text(f"{len(names)} dispositivo" + ("" if len(names) == 1 else "s"))
+        self.status.set_text(
+            f"{len(devices)} dispositivo" + ("" if len(devices) == 1 else "s")
+        )
         self.listbox.select_row(self.listbox.get_row_at_index(0))
         return False
 
@@ -143,7 +143,8 @@ class RgbWindow(Adw.ApplicationWindow):
 
     def _ok(self, info, message):
         self._show_info(info)
-        self.status.set_text(message)
+        suffix = f" · {info['address']}" if info["address"] else ""
+        self.status.set_text(f"{message}{suffix}")
         return False
 
     # --- selección ---
@@ -158,6 +159,19 @@ class RgbWindow(Adw.ApplicationWindow):
 
     def _show_info(self, info):
         self._loading = True
+        self.title.set_text(
+            f"{info['name']} · {info['address']}" if info["address"] else info["name"]
+        )
+        if info["color"]:
+            red, green, blue = info["color"]
+            rgba = Gdk.RGBA()
+            rgba.red, rgba.green, rgba.blue, rgba.alpha = (
+                red / 255,
+                green / 255,
+                blue / 255,
+                1.0,
+            )
+            self.color_button.set_rgba(rgba)
         modes = Gtk.StringList(strings=info["modes"])
         self.mode_dropdown.set_model(modes)
         if info["mode"] in info["modes"]:
