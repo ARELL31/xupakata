@@ -193,13 +193,26 @@ class RgbWindow(Adw.ApplicationWindow):
         def worker():
             try:
                 fn(index, *args)
-                info = self.backend.info(index)
             except Exception as exc:  # noqa: BLE001
-                GLib.idle_add(self._fail, f"No se pudo aplicar: {exc}")
+                info = self._safe_info(index)
+                GLib.idle_add(self._failed, info, f"No se pudo aplicar: {exc}")
             else:
+                info = self.backend.info(index)
                 GLib.idle_add(self._ok, info, message)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _safe_info(self, index):
+        try:
+            return self.backend.info(index)
+        except Exception:  # noqa: BLE001 — sin estado, solo se muestra el error
+            return None
+
+    def _failed(self, info, message):
+        if info is not None:
+            self._show_info(info)
+        self.status.set_text(message)
+        return False
 
     def _on_color(self, button, _pspec):
         if self._loading or self.backend is None:

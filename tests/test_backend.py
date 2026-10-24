@@ -110,6 +110,23 @@ def test_brightness_falla_si_el_modo_no_lo_admite(monkeypatch):
         client.set_brightness(0, 40)
 
 
+def test_reconecta_tras_caida(monkeypatch):
+    device = FakeDevice()
+    client = install(monkeypatch, device)
+
+    def boom(_color):
+        raise OSError("caída")
+
+    device.set_color = boom
+    with pytest.raises(backend.BackendError):
+        client.set_color(0, 1, 2, 3)
+    assert client._client is None
+
+    device.set_color = lambda _color: None
+    client.devices()
+    assert client._client is not None
+
+
 def test_error_si_no_hay_servidor(monkeypatch):
     def refuse(**_kw):
         raise ConnectionRefusedError
