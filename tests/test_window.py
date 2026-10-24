@@ -50,21 +50,21 @@ def select(win, index):
 def test_seleccion_actualiza_el_panel(window):
     select(window, 1)
 
-    assert window.device_address == "0x30"
-    assert "0x30" in window.title.get_text()
+    assert window.device_id == "fake:1"
+    assert "Teclado" in window.title.get_text()
 
 
 def test_resultado_antiguo_no_cambia_el_panel(window):
     select(window, 1)
-    stale = window.backend.info("0x2e")
+    stale = window.backend.info("fake:0")
 
-    window._finish(window._generation - 1, "0x2e", stale, "")
+    window._finish(window._generation - 1, "fake:0", stale, "", None)
     pump(0.1)
-    assert "0x30" in window.title.get_text()
+    assert "Teclado" in window.title.get_text()
 
-    window._finish(window._generation, "0x2e", stale, "")
+    window._finish(window._generation, "fake:0", stale, "", None)
     pump(0.1)
-    assert "0x30" in window.title.get_text()
+    assert "Teclado" in window.title.get_text()
 
 
 def test_cambiar_de_dispositivo_cancela_brillo(window):
@@ -75,3 +75,11 @@ def test_cambiar_de_dispositivo_cancela_brillo(window):
 
     window.listbox.select_row(window.listbox.get_row_at_index(1))
     assert window._bright_timer is None
+
+
+def test_color_deshabilitado_en_modo_sin_color(window):
+    select(window, 0)
+    window.mode_dropdown.set_selected(2)  # Rainbow
+    pump(0.5)
+
+    assert window.color_button.get_sensitive() is False

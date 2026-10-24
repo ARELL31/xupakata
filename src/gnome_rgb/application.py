@@ -1,4 +1,6 @@
 """Punto de entrada de la aplicación."""
+import contextlib
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -19,6 +21,13 @@ class RgbApplication(Adw.Application):
     def do_activate(self):
         window = self.props.active_window or RgbWindow(self)
         window.present()
+
+    def do_shutdown(self):
+        window = self.props.active_window
+        if window is not None:
+            with contextlib.suppress(Exception):
+                window.backend.close()
+        Adw.Application.do_shutdown(self)
 
 
 def main(argv=None):

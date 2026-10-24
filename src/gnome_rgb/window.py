@@ -1,8 +1,8 @@
 """Ventana principal: dispositivos, color, modo y brillo.
 
-Las operaciones de red se ejecutan en un solo hilo auxiliar, en orden, y sus
-resultados se aplican a la interfaz solo si siguen correspondiendo al
-dispositivo seleccionado.
+Las operaciones de red se ejecutan en un solo hilo auxiliar, en orden. Cada
+tarea captura su destino y su época; los resultados obsoletos se descartan y
+las órdenes que quedaron pendientes de una conexión anterior no se ejecutan.
 """
 import queue
 import threading
@@ -15,11 +15,26 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, GLib, Gtk
 
-from .backend import connect
+from .backend import ConnectionLost, DeviceGone, connect
 
 
-def _subtitle(address: str) -> str:
-    return f"SMBus {address}" if address.startswith("0x") else ""
+def _subtitle(device) -> str:
+    """Texto secundario del dispositivo: dirección SMBus si la hay, si no fabricante."""
+    location = device["location"]
+    if "address " in location:
+        return location.rsplit("address ", 1)[-1].strip()
+    return device["vendor"] or ""
+
+
+def _matches(device, wanted) -> bool:
+    """Coincidencia para recuperar la selección tras reconectar.
+
+    Solo compara campos no vacíos: un serial ausente no empareja todo.
+    """
+    for field in ("name", "vendor", "serial", "location"):
+        if wanted.get(field) and wanted[field] != device.get(field):
+            return False
+    return True
 
 
 class RgbWindow(Adw.ApplicationWindow):
@@ -32,10 +47,11 @@ class RgbWindow(Adw.ApplicationWindow):
         )
 
         self.backend = None
-        self.device_address = None
+        self.device_id = None
         self._generation = 0
         self._loading = False
         self._bright_timer = None
+        self._restore = None  # metadatos del dispositivo seleccionado
 
         self._jobs = queue.Queue()
         threading.Thread(target=self._work_loop, daemon=True).start()
@@ -129,13 +145,15 @@ class RgbWindow(Adw.ApplicationWindow):
     def reload(self):
         self._generation += 1
         generation = self._generation
-        self.device_address = None
+        self.device_id = None
         self._cancel_brightness()
         self.listbox.remove_all()
         self._set_controls(False)
         self.status.set_text("Conectando…")
 
         def job():
+            if generation != self._generation:
+                return
             try:
                 backend = connect()
                 devices = backend.devices()
@@ -158,16 +176,33 @@ class RgbWindow(Adw.ApplicationWindow):
         for device in devices:
             row = Adw.ActionRow(
                 title=device["name"],
-                subtitle=_subtitle(device["address"]),
+                subtitle=_subtitle(device),
             )
-            row.address = device["address"]
+            row.device = device
             self.listbox.append(row)
 
         self.status.set_text(
             f"{len(devices)} dispositivo" + ("" if len(devices) == 1 else "s")
         )
-        self.listbox.select_row(self.listbox.get_row_at_index(0))
+        self._select_best_match()
         return False
+
+    def _select_best_match(self):
+        """Recupera la selección anterior si hay una coincidencia única."""
+        first = self.listbox.get_row_at_index(0)
+        if first is None:
+            return
+        rows = []
+        row = first
+        while row is not None:
+            rows.append(row)
+            row = row.get_next_sibling()
+        if self._restore is not None:
+            matches = [row for row in rows if _matches(row.device, self._restore)]
+            if len(matches) == 1:
+                self.listbox.select_row(matches[0])
+                return
+        self.listbox.select_row(first)
 
     def _fail(self, generation, message):
         if generation == self._generation:
@@ -179,36 +214,53 @@ class RgbWindow(Adw.ApplicationWindow):
     def _on_row_selected(self, _listbox, row):
         if row is None or self.backend is None:
             return
-        self.device_address = row.address
+        self.device_id = row.device["id"]
         self._cancel_brightness()
         self._set_controls(True)
         self.status.set_text("Leyendo dispositivo…")
-        self._load_info(row.address)
+        self._load_info(self.device_id)
 
-    def _load_info(self, address):
+    def _load_info(self, ref):
         generation = self._generation
+        backend = self.backend
 
         def job():
-            try:
-                info = self.backend.info(address)
-            except Exception as exc:  # noqa: BLE001
-                GLib.idle_add(self._fail, generation, f"No se pudo leer el dispositivo: {exc}")
+            if generation != self._generation:
                 return
-            GLib.idle_add(self._show_if_current, generation, address, info)
+            try:
+                info = backend.info(ref)
+            except Exception as exc:  # noqa: BLE001
+                GLib.idle_add(self._load_failed, generation, exc)
+                return
+            GLib.idle_add(self._show_if_current, generation, ref, info)
 
         self._jobs.put(job)
 
-    def _show_if_current(self, generation, address, info):
-        if generation == self._generation and address == self.device_address:
+    def _load_failed(self, generation, error):
+        if generation != self._generation:
+            return False
+        self.status.set_text(f"No se pudo leer el dispositivo: {error}")
+        if isinstance(error, (ConnectionLost, DeviceGone)):
+            self.reload()
+        return False
+
+    def _show_if_current(self, generation, ref, info):
+        if generation == self._generation and ref == self.device_id:
             self._show_info(info)
+            self._restore = {
+                "name": info["name"],
+                "vendor": info["vendor"],
+                "serial": info["serial"],
+                "location": info["location"],
+            }
             self.status.set_text("")
         return False
 
     def _show_info(self, info):
         self._loading = True
-        self.title.set_text(
-            f"{info['name']} · {info['address']}" if _subtitle(info["address"]) else info["name"]
-        )
+        subtitle = _subtitle(info)
+        self.title.set_text(f"{info['name']} · {subtitle}" if subtitle else info["name"])
+
         if info["color"]:
             red, green, blue = info["color"]
             rgba = Gdk.RGBA()
@@ -219,10 +271,19 @@ class RgbWindow(Adw.ApplicationWindow):
                 1.0,
             )
             self.color_button.set_rgba(rgba)
+
         self.mode_dropdown.set_model(Gtk.StringList(strings=info["modes"]))
         if info["mode"] in info["modes"]:
             self.mode_dropdown.set_selected(info["modes"].index(info["mode"]))
-        self.mode_dropdown.set_sensitive(True)
+        self.mode_dropdown.set_sensitive(bool(info["modes"]))
+
+        self.color_button.set_sensitive(info["color_supported"])
+        self.color_button.set_tooltip_text(
+            None
+            if info["color_supported"]
+            else f"El modo {info['mode'] or 'actual'} no admite color manual"
+        )
+
         self.brightness_label.set_visible(info["has_brightness"])
         self.brightness.set_visible(info["has_brightness"])
         self.brightness.set_sensitive(info["has_brightness"])
@@ -231,76 +292,86 @@ class RgbWindow(Adw.ApplicationWindow):
 
     # --- aplicar cambios ---
 
-    def _apply(self, address, fn, message):
-        if self.backend is None:
+    def _apply(self, ref, fn, message):
+        backend = self.backend
+        if backend is None:
             return
         generation = self._generation
 
         def job():
-            result = message
+            if generation != self._generation:
+                return  # la orden quedó obsoleta antes de ejecutarse
+            error = None
             try:
-                fn(address)
+                fn(ref)
             except Exception as exc:  # noqa: BLE001
-                result = f"No se pudo aplicar: {exc}"
-            info = self._safe_info(address)
-            GLib.idle_add(self._finish, generation, address, info, result)
+                error = exc
+            info = self._safe_info(backend, ref)
+            GLib.idle_add(self._finish, generation, ref, info, message, error)
 
         self._jobs.put(job)
 
-    def _safe_info(self, address):
+    def _safe_info(self, backend, ref):
         try:
-            return self.backend.info(address)
+            return backend.info(ref)
         except Exception:  # noqa: BLE001 — sin estado, solo se muestra el error
             return None
 
-    def _finish(self, generation, address, info, message):
+    def _finish(self, generation, ref, info, message, error):
         if generation != self._generation:
             return False
-        if info is not None and address == self.device_address:
+        if info is not None and ref == self.device_id:
             self._show_info(info)
-        if message:
-            self.status.set_text(f"{message} · {address}" if address else message)
+        if error is not None:
+            self.status.set_text(f"No se pudo aplicar: {error}")
+            if isinstance(error, (ConnectionLost, DeviceGone)):
+                self.reload()
+        elif message:
+            self.status.set_text(message)
         return False
 
     def _on_color(self, button, _pspec):
-        if self._loading or self.device_address is None:
+        if self._loading or self.device_id is None:
             return
         rgba = button.get_rgba()
         rgb = tuple(round(value * 255) for value in (rgba.red, rgba.green, rgba.blue))
-        address = self.device_address
+        ref = self.device_id
+        backend = self.backend
         self._apply(
-            address,
-            lambda target: self.backend.set_color(target, *rgb),
+            ref,
+            lambda target: backend.set_color(target, *rgb),
             "Color aplicado",
         )
 
     def _on_mode(self, dropdown, _pspec):
-        if self._loading or self.device_address is None:
+        if self._loading or self.device_id is None:
             return
         item = dropdown.get_selected_item()
         if item is not None:
             name = item.get_string()
-            address = self.device_address
+            ref = self.device_id
+            backend = self.backend
             self._apply(
-                address,
-                lambda target: self.backend.set_mode(target, name),
+                ref,
+                lambda target: backend.set_mode(target, name),
                 "Modo aplicado",
             )
 
     def _on_brightness(self, scale):
-        if self._loading or self.device_address is None:
+        if self._loading or self.device_id is None:
             return
-        address = self.device_address
+        ref = self.device_id
         self._cancel_brightness()
         value = round(scale.get_value())
-        self._bright_timer = GLib.timeout_add(150, self._apply_brightness, address, value)
+        self._bright_timer = GLib.timeout_add(150, self._apply_brightness, ref, value)
 
-    def _apply_brightness(self, address, value):
+    def _apply_brightness(self, ref, value):
         self._bright_timer = None
-        if address == self.device_address:
+        if ref == self.device_id:
+            backend = self.backend
             self._apply(
-                address,
-                lambda target: self.backend.set_brightness(target, value),
+                ref,
+                lambda target: backend.set_brightness(target, value),
                 "Brillo aplicado",
             )
         return False
