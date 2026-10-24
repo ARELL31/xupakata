@@ -1,4 +1,4 @@
-"""Ventana principal: lista de dispositivos y selector de color."""
+"""Ventana principal: dispositivos, color, modo y brillo."""
 import threading
 
 import gi
@@ -22,6 +22,8 @@ class RgbWindow(Adw.ApplicationWindow):
 
         self.backend = None
         self.device_index = None
+        self._loading = False
+        self._bright_timer = None
 
         header = Adw.HeaderBar()
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Reconectar")
@@ -35,13 +37,37 @@ class RgbWindow(Adw.ApplicationWindow):
         )
 
         self.status = Gtk.Label(label="Conectando…", wrap=True)
+
         self.color_button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(title="Color"))
-        self.color_button.set_sensitive(False)
         self.color_button.connect("notify::rgba", self._on_color)
 
-        color_row = Gtk.Box(spacing=12)
-        color_row.append(Gtk.Label(label="Color"))
-        color_row.append(self.color_button)
+        self.mode_dropdown = Gtk.DropDown()
+        self.mode_dropdown.connect("notify::selected", self._on_mode)
+
+        self.brightness = Gtk.Scale(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            adjustment=Gtk.Adjustment(lower=0, upper=100, step_increment=1),
+            width_request=200,
+            draw_value=True,
+            digits=0,
+        )
+        self.brightness.connect("value-changed", self._on_brightness)
+
+        grid = Gtk.Grid(row_spacing=12, column_spacing=12)
+        self.brightness_label = Gtk.Label(label="Brillo", xalign=0)
+        for row, (label, widget) in enumerate(
+            [
+                (Gtk.Label(label="Color", xalign=0), self.color_button),
+                (Gtk.Label(label="Modo", xalign=0), self.mode_dropdown),
+                (self.brightness_label, self.brightness),
+            ]
+        ):
+            grid.attach(label, 0, row, 1, 1)
+            grid.attach(widget, 1, row, 1, 1)
+
+        self.controls = [self.color_button, self.mode_dropdown, self.brightness]
+        for widget in self.controls:
+            widget.set_sensitive(False)
 
         panel = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
@@ -54,7 +80,7 @@ class RgbWindow(Adw.ApplicationWindow):
             halign=Gtk.Align.CENTER,
         )
         panel.append(self.status)
-        panel.append(color_row)
+        panel.append(grid)
 
         split = Adw.NavigationSplitView()
         split.set_sidebar(Adw.NavigationPage(title="Dispositivos", child=sidebar))
@@ -71,9 +97,10 @@ class RgbWindow(Adw.ApplicationWindow):
 
     def reload(self):
         self.status.set_text("Conectando…")
-        self.color_button.set_sensitive(False)
         self.listbox.remove_all()
         self.device_index = None
+        for widget in self.controls:
+            widget.set_sensitive(False)
         threading.Thread(target=self._connect_worker, daemon=True).start()
 
     def _connect_worker(self):
@@ -114,33 +141,75 @@ class RgbWindow(Adw.ApplicationWindow):
         self.status.set_text(message)
         return False
 
-    # --- selección y color ---
+    def _ok(self, info, message):
+        self._show_info(info)
+        self.status.set_text(message)
+        return False
+
+    # --- selección ---
 
     def _on_row_selected(self, _listbox, row):
-        if row is None:
+        if row is None or self.backend is None:
             return
         self.device_index = row.index
-        self.color_button.set_sensitive(True)
+        for widget in self.controls:
+            widget.set_sensitive(True)
+        self._show_info(self.backend.info(row.index))
+
+    def _show_info(self, info):
+        self._loading = True
+        modes = Gtk.StringList(strings=info["modes"])
+        self.mode_dropdown.set_model(modes)
+        if info["mode"] in info["modes"]:
+            self.mode_dropdown.set_selected(info["modes"].index(info["mode"]))
+        self.mode_dropdown.set_sensitive(True)
+        self.brightness_label.set_visible(info["has_brightness"])
+        self.brightness.set_visible(info["has_brightness"])
+        self.brightness.set_sensitive(info["has_brightness"])
+        self.brightness.set_value(info["brightness"])
+        self._loading = False
+
+    # --- aplicar cambios ---
+
+    def _run(self, fn, message, *args):
+        if self.backend is None or self.device_index is None:
+            return
+        index = self.device_index
+
+        def worker():
+            try:
+                fn(index, *args)
+                info = self.backend.info(index)
+            except Exception as exc:  # noqa: BLE001
+                GLib.idle_add(self._fail, f"No se pudo aplicar: {exc}")
+            else:
+                GLib.idle_add(self._ok, info, message)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _on_color(self, button, _pspec):
-        if self.backend is None or self.device_index is None:
+        if self._loading or self.backend is None:
             return
         rgba = button.get_rgba()
         rgb = tuple(round(value * 255) for value in (rgba.red, rgba.green, rgba.blue))
-        threading.Thread(
-            target=self._apply_worker,
-            args=(self.device_index, *rgb),
-            daemon=True,
-        ).start()
+        self._run(self.backend.set_color, "Color aplicado", *rgb)
 
-    def _apply_worker(self, index, red, green, blue):
-        try:
-            self.backend.set_color(index, red, green, blue)
-        except Exception as exc:  # noqa: BLE001
-            GLib.idle_add(self._fail, f"No se pudo aplicar el color: {exc}")
-        else:
-            GLib.idle_add(self._ok)
+    def _on_mode(self, dropdown, _pspec):
+        if self._loading or self.backend is None:
+            return
+        item = dropdown.get_selected_item()
+        if item is not None:
+            self._run(self.backend.set_mode, "Modo aplicado", item.get_string())
 
-    def _ok(self):
-        self.status.set_text("Color aplicado")
+    def _on_brightness(self, scale):
+        if self._loading or self.backend is None:
+            return
+        if self._bright_timer:
+            GLib.source_remove(self._bright_timer)
+        value = round(scale.get_value())
+        self._bright_timer = GLib.timeout_add(150, self._apply_brightness, value)
+
+    def _apply_brightness(self, value):
+        self._bright_timer = None
+        self._run(self.backend.set_brightness, "Brillo aplicado", value)
         return False
