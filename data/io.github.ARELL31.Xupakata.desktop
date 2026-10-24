@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=xupakata
+GenericName=Control de iluminación RGB
+Comment=Controla la iluminación RGB de tus dispositivos con OpenRGB
+Exec=xupakata
+Icon=io.github.ARELL31.Xupakata
+Terminal=false
+Type=Application
+Categories=Utility;
+Keywords=RGB;LED;OpenRGB;color;iluminación;
+StartupNotify=true

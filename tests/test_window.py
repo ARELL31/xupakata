@@ -1,12 +1,13 @@
-"""Pruebas de la ventana. Requieren sesión gráfica (DISPLAY)."""
+"""Pruebas de la ventana. Requieren sesión gráfica."""
 import os
+import threading
 import time
 
 import pytest
 
 pytest.importorskip("gi")
 
-if not os.environ.get("DISPLAY"):
+if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
     pytest.skip("requiere sesión gráfica", allow_module_level=True)
 
 import gi
@@ -16,7 +17,8 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, GLib
 
-from gnome_rgb.window import Panel, RgbWindow
+from xupakata.backend import ConnectionLost
+from xupakata.window import Panel, RgbWindow
 
 _counter = iter(range(1000))
 
@@ -29,22 +31,30 @@ def pump(seconds=1.0):
         time.sleep(0.01)
 
 
+def wait_for(predicate, timeout=2.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        if predicate():
+            return True
+        pump(0.02)
+    return predicate()
+
+
 @pytest.fixture
 def window(monkeypatch):
-    monkeypatch.setenv("GNOME_RGB_FAKE", "1")
-    app = Adw.Application(application_id=f"io.test.GnomeRgb{next(_counter)}")
+    monkeypatch.setenv("XUPAKATA_FAKE", "1")
+    app = Adw.Application(application_id=f"io.test.Xupakata{next(_counter)}")
     app.register(None)
     win = RgbWindow(app)
-    deadline = time.time() + 3
-    while win.backend is None and time.time() < deadline:
-        pump(0.05)
-    assert win.backend is not None
-    return win
+    assert wait_for(lambda: win.backend is not None, timeout=3.0)
+    yield win
+    win.shutdown()
+    win.destroy()
 
 
 def select(win, index):
     win.listbox.select_row(win.listbox.get_row_at_index(index))
-    pump(0.3)
+    assert wait_for(lambda: win._panel in (Panel.READY, Panel.ERROR, Panel.NO_SELECTION))
 
 
 def test_sin_seleccion_automatica_con_varios(window):
@@ -66,7 +76,7 @@ def test_controles_desactivados_mientras_carga(window):
     assert window._panel is Panel.LOADING
     assert window.color_button.get_sensitive() is False
 
-    pump(0.3)
+    assert wait_for(lambda: window._panel is Panel.READY)
     assert window.color_button.get_sensitive() is True
 
 
@@ -85,13 +95,30 @@ def test_resultado_de_otra_seleccion_no_toca_el_panel(window):
     assert window.device_id == "fake:1"
 
 
+def test_resultado_obsoleto_no_cambia_estado(window):
+    select(window, 1)
+    before = (window._panel, window.status.get_text(), window.device_id)
+
+    window._finish(
+        window._generation,
+        window.selection_revision - 1,
+        window.request_id,
+        "fake:0",
+        None,
+        "aplicado",
+        RuntimeError("fallo"),
+        None,
+    )
+
+    assert (window._panel, window.status.get_text(), window.device_id) == before
+
+
 def test_restauracion_ambigua_no_elige(window):
     window._restore = {"vendor": "Demo"}
     window.reload()
-    pump(1.0)
+    assert wait_for(lambda: window._panel is Panel.NO_SELECTION, timeout=3.0)
 
     assert window.device_id is None
-    assert window._panel is Panel.NO_SELECTION
     assert "varias coincidencias" in window.status.get_text()
 
 
@@ -108,7 +135,7 @@ def test_cambiar_de_dispositivo_cancela_brillo(window):
 def test_color_deshabilitado_en_modo_sin_color(window):
     select(window, 0)
     window.mode_dropdown.set_selected(2)  # Rainbow
-    pump(0.5)
+    assert wait_for(lambda: window._panel is Panel.READY and not window.color_button.get_sensitive())
 
     assert window.color_button.get_sensitive() is False
 
@@ -123,9 +150,49 @@ def test_color_abierto_para_otro_dispositivo_se_descarta(window):
     assert "Se descartó el color" in window.status.get_text()
 
 
-def test_shutdown_detiene_el_trabajador(window):
+def test_un_solo_reintento_automatico_por_incidente(window):
+    generation = window._generation
+    window._load_failed(generation, window.selection_revision, ConnectionLost("caída"))
+
+    assert window._generation == generation + 1
+    assert wait_for(lambda: window.backend is not None, timeout=3.0)
+    assert window._auto_reconnect_used is False
+
+
+def test_sin_bucle_de_reconexion(window):
+    window._auto_reconnect_used = True
+    generation = window._generation
+
+    window._load_failed(generation, window.selection_revision, ConnectionLost("caída"))
+
+    assert window._generation == generation
+    assert window._panel is Panel.ERROR
+    assert "Reconectar" in window.status.get_text()
+
+
+def test_cierre_durante_trabajo_termina(window):
+    started = threading.Event()
+
+    def slow():
+        started.set()
+        time.sleep(0.2)
+
+    window.worker.submit(slow)
+    assert started.wait(1)
     worker = window.worker
+
     window.shutdown()
 
-    assert not worker._thread.is_alive()
+    assert wait_for(lambda: not worker._thread.is_alive())
     assert window.backend is None
+
+
+def test_callback_tras_cierre_se_ignora(window):
+    generation = window._generation
+    revision = window.selection_revision
+    window.shutdown()
+
+    window._finish(generation, revision, window.request_id, "fake:0", None, "aplicado", None, None)
+
+    assert window.status.get_text() != "aplicado"
+    assert not window.worker._thread.is_alive()

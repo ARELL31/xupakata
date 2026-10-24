@@ -11,7 +11,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from .backend import ConnectionLost, DeviceGone, ServerUnavailable, connect
 from .i18n import _, plural
@@ -69,7 +69,7 @@ class RgbWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(
             application=app,
-            title="GNOME RGB",
+            title="xupakata",
             default_width=900,
             default_height=600,
         )
@@ -86,6 +86,7 @@ class RgbWindow(Adw.ApplicationWindow):
         self._bright_timer = None
         self._restore = None
         self._closing = False
+        self._auto_reconnect_used = False
 
         self.worker = Worker()
 
@@ -104,6 +105,16 @@ class RgbWindow(Adw.ApplicationWindow):
         refresh.update_property([Gtk.AccessibleProperty.LABEL], [_("Reconectar")])
         refresh.connect("clicked", lambda *_: self.reload())
         header.pack_end(refresh)
+
+        menu = Gio.Menu()
+        menu.append(_("_Acerca de xupakata"), "app.about")
+        menu.append(_("_Salir"), "app.quit")
+        menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu)
+        menu_button.set_tooltip_text(_("Menú principal"))
+        menu_button.update_property(
+            [Gtk.AccessibleProperty.LABEL], [_("Menú principal")]
+        )
+        header.pack_end(menu_button)
 
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.listbox.add_css_class("boxed-list")
@@ -222,7 +233,21 @@ class RgbWindow(Adw.ApplicationWindow):
 
     # --- conexión ---
 
-    def reload(self, reconnecting: bool = False):
+    def reload(self, reconnecting: bool = False, automatic: bool = False):
+        if self._closing:
+            return
+        if automatic:
+            if self._auto_reconnect_used:
+                self._state = Connection.FAILED
+                self._panel = Panel.ERROR
+                self.status.set_text(
+                    _("OpenRGB sigue sin responder. Usa Reconectar para intentarlo de nuevo.")
+                )
+                self._render_state()
+                return
+            self._auto_reconnect_used = True
+        else:
+            self._auto_reconnect_used = False
         self._generation += 1
         generation = self._generation
         old_backend, self.backend = self.backend, None
@@ -241,35 +266,57 @@ class RgbWindow(Adw.ApplicationWindow):
             if old_backend is not None:
                 with contextlib.suppress(Exception):
                     old_backend.close()
-            if generation != self._generation:
+            if generation != self._generation or self._closing:
                 return
+            backend = None
             try:
                 backend = connect()
                 devices = backend.devices()
             except Exception as exc:  # noqa: BLE001 — frontera de hilo
+                if backend is not None:
+                    with contextlib.suppress(Exception):
+                        backend.close()
                 GLib.idle_add(self._connect_failed, generation, exc)
                 return
-            if generation != self._generation:
-                backend.close()  # conexión creada para una generación obsoleta
+            if generation != self._generation or self._closing:
+                with contextlib.suppress(Exception):
+                    backend.close()  # conexión creada para una generación obsoleta
                 return
             GLib.idle_add(self._loaded, generation, backend, devices)
 
         self.worker.submit(job)
 
     def _connect_failed(self, generation, error):
-        if generation != self._generation:
+        if generation != self._generation or self._closing:
             return False
         self._state = Connection.FAILED
         self._panel = Panel.EMPTY
         self._render_state()
-        self.status.set_text(f"{error}")
+        self.status.set_text(_("No se pudo conectar: %(error)s") % {"error": error})
         return False
 
+    def _recover(self, message):
+        """Un intento automático por incidente; después, reintento manual."""
+        if self._closing:
+            return
+        if self._auto_reconnect_used:
+            self._state = Connection.FAILED
+            self._panel = Panel.ERROR
+            self.status.set_text(
+                _("%(error)s. Usa Reconectar para intentarlo de nuevo.") % {"error": message}
+            )
+            self._render_state()
+            return
+        self.reload(reconnecting=True, automatic=True)
+
     def _loaded(self, generation, backend, devices):
-        if generation != self._generation:
+        if generation != self._generation or self._closing:
+            with contextlib.suppress(Exception):
+                backend.close()
             return False
         self.backend = backend
         self._state = Connection.CONNECTED
+        self._auto_reconnect_used = False
 
         if not devices:
             self._panel = Panel.EMPTY
@@ -349,7 +396,8 @@ class RgbWindow(Adw.ApplicationWindow):
         if row is None or self.backend is None:
             self.device_id = None
             self._caps = {}
-            self._panel = Panel.NO_SELECTION
+            self._panel = Panel.EMPTY if self.backend is None else Panel.NO_SELECTION
+            self.title.set_text("")
             self._render_state()
             return
 
@@ -367,7 +415,7 @@ class RgbWindow(Adw.ApplicationWindow):
         backend = self.backend
 
         def job():
-            if generation != self._generation:
+            if generation != self._generation or backend is not self.backend:
                 return
             try:
                 info = backend.info(ref, refresh=True)
@@ -381,11 +429,12 @@ class RgbWindow(Adw.ApplicationWindow):
     def _load_failed(self, generation, revision, error):
         if generation != self._generation or revision != self.selection_revision:
             return False
-        self._panel = Panel.ERROR
-        self._render_state()
-        self.status.set_text(_("No se pudo leer el dispositivo: %(error)s") % {"error": error})
         if isinstance(error, (ConnectionLost, DeviceGone, ServerUnavailable)):
-            self.reload(reconnecting=True)
+            self._recover(str(error))
+            return False
+        self._panel = Panel.ERROR
+        self.status.set_text(_("No se pudo leer el dispositivo: %(error)s") % {"error": error})
+        self._render_state()
         return False
 
     def _show_if_current(self, generation, revision, ref, info):
@@ -419,7 +468,8 @@ class RgbWindow(Adw.ApplicationWindow):
             )
             self.swatch.queue_draw()
         else:
-            self.color_button.set_tooltip_text(_("OpenRGB no reporta el color actual"))
+            self._rgba = None
+            self.swatch.queue_draw()
 
         self.mode_dropdown.set_model(Gtk.StringList(strings=info["modes"]))
         if info["mode"] in info["modes"]:
@@ -430,11 +480,13 @@ class RgbWindow(Adw.ApplicationWindow):
             "modes": bool(info["modes"]),
             "brightness": info["has_brightness"],
         }
-        self.color_button.set_tooltip_text(
-            None
-            if info["color_supported"]
-            else _("Este modo no admite color manual. Selecciona otro modo para cambiarlo.")
-        )
+        if not info["color_supported"]:
+            tooltip = _("Este modo no admite color manual. Selecciona otro modo para cambiarlo.")
+        elif info["color"] is None:
+            tooltip = _("OpenRGB no reporta el color actual")
+        else:
+            tooltip = None
+        self.color_button.set_tooltip_text(tooltip)
         self.brightness.set_value(info["brightness"])
         self._loading = False
 
@@ -442,7 +494,7 @@ class RgbWindow(Adw.ApplicationWindow):
 
     def _apply(self, ref, fn, message):
         backend = self.backend
-        if backend is None:
+        if backend is None or self._closing:
             return
         generation = self._generation
         revision = self.selection_revision
@@ -453,7 +505,7 @@ class RgbWindow(Adw.ApplicationWindow):
         self._render_state()
 
         def job():
-            if generation != self._generation:
+            if generation != self._generation or backend is not self.backend:
                 return
             error = None
             try:
@@ -481,18 +533,10 @@ class RgbWindow(Adw.ApplicationWindow):
         self.worker.submit(job)
 
     def _finish(self, generation, revision, request, ref, info, message, error, read_error):
-        if generation != self._generation:
+        if generation != self._generation or self._closing:
             return False
         if revision != self.selection_revision or request != self.request_id:
-            # Operación de otro dispositivo/selección: no tocar este panel.
-            if self._panel is Panel.APPLYING:
-                if not self.device_id:
-                    self._panel = Panel.NO_SELECTION
-                elif self._caps:
-                    self._panel = Panel.READY
-                else:
-                    self._panel = Panel.LOADING
-                self._render_state()
+            # Resultado de otra selección u operación: se descarta por completo.
             return False
 
         if info is not None:
@@ -501,16 +545,16 @@ class RgbWindow(Adw.ApplicationWindow):
         if error is not None:
             self._panel = Panel.ERROR
             self.status.set_text(_("No se pudo aplicar: %(error)s") % {"error": error})
-            if isinstance(error, (ConnectionLost, DeviceGone)):
-                self.reload(reconnecting=True)
+            if isinstance(error, (ConnectionLost, DeviceGone, ServerUnavailable)):
+                self._recover(str(error))
                 return False
         elif read_error is not None:
             self._panel = Panel.ERROR
             self.status.set_text(
                 _("El cambio se envió, pero no se pudo consultar el estado")
             )
-            if isinstance(read_error, (ConnectionLost, DeviceGone)):
-                self.reload(reconnecting=True)
+            if isinstance(read_error, (ConnectionLost, DeviceGone, ServerUnavailable)):
+                self._recover(str(read_error))
                 return False
         else:
             self._panel = Panel.READY
@@ -533,7 +577,7 @@ class RgbWindow(Adw.ApplicationWindow):
         cr.fill()
 
     def _on_color_clicked(self, _button):
-        if self.device_id is None:
+        if self.device_id is None or self._closing:
             return
         target = (self._generation, self.selection_revision, self.device_id)
         initial = self._rgba or Gdk.RGBA(red=1.0, green=1.0, blue=1.0, alpha=1.0)
@@ -542,6 +586,8 @@ class RgbWindow(Adw.ApplicationWindow):
         )
 
     def _on_color_chosen(self, dialog, result, target):
+        if self._closing:
+            return
         try:
             rgba = dialog.choose_rgba_finish(result)
         except GLib.Error:
@@ -549,6 +595,8 @@ class RgbWindow(Adw.ApplicationWindow):
         self._apply_color(target, rgba)
 
     def _apply_color(self, target, rgba):
+        if self._closing:
+            return
         if target != (self._generation, self.selection_revision, self.device_id):
             self.status.set_text(
                 _("Se descartó el color: cambió el dispositivo seleccionado")
@@ -566,7 +614,7 @@ class RgbWindow(Adw.ApplicationWindow):
         )
 
     def _on_mode(self, dropdown, _pspec):
-        if self._loading or self.device_id is None:
+        if self._loading or self.device_id is None or self._closing:
             return
         item = dropdown.get_selected_item()
         if item is not None:
@@ -581,7 +629,7 @@ class RgbWindow(Adw.ApplicationWindow):
             )
 
     def _on_brightness(self, scale):
-        if self._loading or self.device_id is None:
+        if self._loading or self.device_id is None or self._closing:
             return
         ref = self.device_id
         self._cancel_brightness()
@@ -608,6 +656,8 @@ class RgbWindow(Adw.ApplicationWindow):
 
     def shutdown(self):
         """Cancela pendientes y cierra la conexión desde el trabajador."""
+        if self._closing:
+            return
         self._closing = True
         self._generation += 1
         self._cancel_brightness()

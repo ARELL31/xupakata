@@ -122,7 +122,7 @@ class RgbBackend:
             client = OpenRGBClient(
                 address=self._host,
                 port=self._port,
-                name="GNOME RGB",
+                name="xupakata",
             )
         except OSError as exc:
             logger.debug("no se pudo conectar con OpenRGB: %s", exc)
@@ -347,6 +347,6 @@ class FakeBackend:
 
 
 def connect(host: str = HOST, port: int = PORT) -> RgbBackend | FakeBackend:
-    if os.environ.get("GNOME_RGB_FAKE"):
+    if os.environ.get("XUPAKATA_FAKE"):
         return FakeBackend()
     return RgbBackend(host, port)

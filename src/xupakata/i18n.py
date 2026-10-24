@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import gettext
+import os
+import sys
 
-_translation = gettext.translation("gnome-rgb", fallback=True)
+# Dentro del Snap el catálogo se instala en $SNAP/share/locale.
+_locale_dir = os.path.join(os.environ.get("SNAP", sys.prefix), "share", "locale")
+_translation = gettext.translation("xupakata", localedir=_locale_dir, fallback=True)
 
 _ = _translation.gettext
 ngettext = _translation.ngettext

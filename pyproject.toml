@@ -3,17 +3,28 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "gnome-rgb"
+name = "xupakata"
 version = "0.1.0"
-description = "Control de iluminación RGB para GNOME"
+description = "Controla la iluminación RGB de tus dispositivos con OpenRGB"
+readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["openrgb-python"]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "ARELL31", url = "https://github.com/ARELL31" }]
+dependencies = ["openrgb-python==0.3.8"]
+
+[project.urls]
+Homepage = "https://github.com/ARELL31/xupakata"
+Issues = "https://github.com/ARELL31/xupakata/issues"
 
 [project.scripts]
-gnome-rgb = "gnome_rgb.application:main"
+xupakata = "xupakata.application:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/gnome_rgb"]
+packages = ["src/xupakata"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "data", "scripts", "LICENSE", "README.md", "pyproject.toml"]
 
 [tool.ruff]
 line-length = 100

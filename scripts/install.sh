@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GNOME RGB — instalación por etapas (Ubuntu 24.04+).
+# xupakata — instalación por etapas (Ubuntu 24.04+).
 #
 # Uso:  ./scripts/install.sh [etapa...]
 #

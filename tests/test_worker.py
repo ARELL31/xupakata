@@ -1,7 +1,7 @@
 import threading
 import time
 
-from gnome_rgb.worker import Worker
+from xupakata.worker import Worker
 
 
 def test_ejecuta_en_orden():
@@ -58,6 +58,23 @@ def test_clear_descarta_pendientes():
 def test_stop_termina_el_hilo():
     worker = Worker()
     worker.submit(lambda: None)
+    worker.stop()
+
+    assert not worker._thread.is_alive()
+
+
+def test_no_acepta_tareas_tras_stop():
+    worker = Worker()
+    worker.stop()
+    done = []
+
+    assert worker.submit(lambda: done.append("tarde")) is False
+    assert done == []
+
+
+def test_stop_es_idempotente():
+    worker = Worker()
+    worker.stop()
     worker.stop()
 
     assert not worker._thread.is_alive()

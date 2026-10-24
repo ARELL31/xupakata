@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GNOME RGB — entorno virtual y dependencias del proyecto.
+# xupakata — entorno virtual y dependencias del proyecto.
 # Uso:  ./scripts/bootstrap.sh   (desde cualquier directorio)
 set -euo pipefail
 
@@ -11,7 +11,7 @@ step() { echo; echo "==> $*"; }
 
 [ "$(id -u)" -eq 0 ] && die "no ejecutes este script con sudo: las dependencias de Python deben quedar en tu usuario"
 
-mkdir -p src/gnome_rgb/{models,widgets,services} \
+mkdir -p src/xupakata/{models,widgets,services} \
          data/icons/{scalable,symbolic} \
          data/illustrations/{keyboards,fans,controllers} \
          data/ui tests docs snap
@@ -41,4 +41,4 @@ fi
 
 echo
 echo "listo: $ROOT"
-echo "  source .venv/bin/activate && python -m gnome_rgb"
+echo "  source .venv/bin/activate && python -m xupakata"

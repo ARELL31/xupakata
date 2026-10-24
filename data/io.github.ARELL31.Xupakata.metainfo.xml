@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.ARELL31.Xupakata</id>
+  <name>xupakata</name>
+  <summary>Controla la iluminación RGB de tus dispositivos con OpenRGB</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      xupakata cambia el color, el modo y el brillo de los dispositivos RGB
+      detectados por OpenRGB.
+    </p>
+    <p>
+      Solo muestra los controles que el dispositivo y el modo activo admiten.
+      Requiere un servidor OpenRGB en 127.0.0.1:6742.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.ARELL31.Xupakata.desktop</launchable>
+  <url type="homepage">https://github.com/ARELL31/xupakata</url>
+  <url type="bugtracker">https://github.com/ARELL31/xupakata/issues</url>
+  <developer id="io.github.arell31">
+    <name>ARELL31</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-23">
+      <description>
+        <p>Primera versión: dispositivos, color, modos y brillo mediante OpenRGB.</p>
+      </description>
+    </release>
+  </releases>
+</component>

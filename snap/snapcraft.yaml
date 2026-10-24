@@ -1,0 +1,66 @@
+name: xupakata
+title: xupakata
+base: core24
+version: "0.1.0"
+summary: Controla la iluminación RGB de tus dispositivos con OpenRGB
+description: |
+  xupakata cambia el color, el modo y el brillo de los dispositivos RGB
+  detectados por OpenRGB. Solo muestra los controles que el dispositivo y el
+  modo activo admiten.
+
+  OpenRGB debe estar instalado y ejecutándose en el sistema anfitrión como
+  servidor SDK en 127.0.0.1:6742.
+grade: devel
+confinement: strict
+license: GPL-3.0-or-later
+website: https://github.com/ARELL31/xupakata
+source-code: https://github.com/ARELL31/xupakata
+issues: https://github.com/ARELL31/xupakata/issues
+
+platforms:
+  amd64:
+
+apps:
+  xupakata:
+    command: bin/xupakata
+    extensions: [gnome]
+    desktop: usr/share/applications/io.github.ARELL31.Xupakata.desktop
+    common-id: io.github.ARELL31.Xupakata.desktop
+    plugs:
+      - network
+    slots:
+      - dbus-xupakata
+    environment:
+      PYTHONPATH: $SNAP/usr/lib/python3/dist-packages
+
+slots:
+  dbus-xupakata:
+    interface: dbus
+    bus: session
+    name: io.github.ARELL31.Xupakata
+
+parts:
+  xupakata:
+    plugin: python
+    source: .
+    build-environment:
+      - PARTS_PYTHON_INTERPRETER: /usr/bin/python3
+    build-packages:
+      - python3-venv
+    stage-packages:
+      - python3-gi
+      - python3-gi-cairo
+      - python3-cairo
+      - python3-venv
+      - libgirepository-1.0-1
+      - gir1.2-glib-2.0
+    override-build: |
+      craftctl default
+      install -Dm644 data/io.github.ARELL31.Xupakata.desktop \
+        "$CRAFT_PART_INSTALL/usr/share/applications/io.github.ARELL31.Xupakata.desktop"
+      install -Dm644 data/io.github.ARELL31.Xupakata.metainfo.xml \
+        "$CRAFT_PART_INSTALL/usr/share/metainfo/io.github.ARELL31.Xupakata.metainfo.xml"
+      install -Dm644 data/icons/hicolor/scalable/apps/io.github.ARELL31.Xupakata.svg \
+        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/io.github.ARELL31.Xupakata.svg"
+      install -Dm644 data/icons/hicolor/symbolic/apps/io.github.ARELL31.Xupakata-symbolic.svg \
+        "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/symbolic/apps/io.github.ARELL31.Xupakata-symbolic.svg"

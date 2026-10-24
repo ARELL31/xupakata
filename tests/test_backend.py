@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from openrgb import utils
 
-from gnome_rgb import backend
+from xupakata import backend
 
 
 def mode(name, color_mode, brightness_min=0, brightness_max=100, brightness=50):
