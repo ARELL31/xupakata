@@ -1,0 +1,12 @@
+[project]
+name = "gnome-rgb"
+version = "0.1.0"
+description = "Control de iluminación RGB para GNOME"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
