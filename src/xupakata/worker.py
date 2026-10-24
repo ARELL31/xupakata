@@ -3,6 +3,7 @@
 Solo el hilo auxiliar toca el SDK; nunca el hilo de GTK. Las tareas se
 ejecutan en orden y pueden descartarse antes de empezar.
 """
+
 import logging
 import queue
 import threading

@@ -1,4 +1,5 @@
 """La identidad pública debe coincidir en todos los artefactos."""
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +22,7 @@ def test_lanzador_coincide_con_el_id():
 def test_metadatos_declaran_el_lanzador_y_la_licencia():
     metainfo = (ROOT / f"data/{APP_ID}.metainfo.xml").read_text()
     assert f"<id>{APP_ID}</id>" in metainfo
-    assert f"<launchable type=\"desktop-id\">{APP_ID}.desktop</launchable>" in metainfo
+    assert f'<launchable type="desktop-id">{APP_ID}.desktop</launchable>' in metainfo
     assert "<project_license>GPL-3.0-or-later</project_license>" in metainfo
 
 
@@ -47,3 +48,14 @@ def test_el_paquete_python_se_llama_xupakata():
     assert 'name = "xupakata"' in pyproject
     assert 'xupakata = "xupakata.application:main"' in pyproject
     assert 'license = "GPL-3.0-or-later"' in pyproject
+
+
+def test_la_version_coincide_en_los_artefactos():
+    import tomllib
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    version = pyproject["project"]["version"]
+    metainfo = (ROOT / f"data/{APP_ID}.metainfo.xml").read_text()
+
+    assert f'version: "{version}"' in (ROOT / "snap/snapcraft.yaml").read_text()
+    assert f'<release version="{version}"' in metainfo
